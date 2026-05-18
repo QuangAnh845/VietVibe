@@ -78,7 +78,7 @@ export default function AdminSidebar({ active }: AdminSidebarProps) {
         </div>
       </div>
 
-      <div className="mt-auto rounded-2xl bg-[#f5f7f3] p-4">
+      <div className="mt-auto rounded-2xl  p-2">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2f5d50] text-xs font-semibold text-white">
             AD

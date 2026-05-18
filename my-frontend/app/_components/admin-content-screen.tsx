@@ -269,7 +269,7 @@ export default function AdminContentScreen() {
         {isSidebarOpen ? <AdminSidebar active="content" /> : null}
 
         <main
-          className={`h-screen overflow-hidden bg-[#f4f6f2] ${
+          className={`h-screen overflow-hidden bg-white ${
             isSidebarOpen ? "ml-56 w-[calc(100%-14rem)]" : "w-full"
           }`}
         >
@@ -407,7 +407,19 @@ export default function AdminContentScreen() {
                                         }`}
                                       >
                                         <span>{unit.title}</span>
-                                        <StatusDot status={unit.status} />
+                                        <StatusDot
+                                          status={unit.status}
+                                          ariaLabel="Edit situation"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setIsEditSituationOpen(true);
+                                            setCurrentLocationId(location.id);
+                                            setSituationForm({
+                                              id: unit.id,
+                                              title: unit.title,
+                                            });
+                                          }}
+                                        />
                                       </button>
                                     ))}
                                     {location.units.length === 0 ? (
@@ -434,7 +446,7 @@ export default function AdminContentScreen() {
               >
                 {activeUnit ? (
                   <div className=" border border-[#eef2ee] bg-white ">
-                    <div className="border-b border-[#eef2ee] bg-[#f7f8f5] px-8 py-4">
+                    <div className="border-b border-[#eef2ee] bg-white px-8 py-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <button
@@ -445,7 +457,11 @@ export default function AdminContentScreen() {
                             className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#e6ece6] bg-white text-[#7b8b83]"
                             aria-label="Toggle content sidebar"
                           >
-                            <MenuIcon className="h-4 w-4" />
+                            {isContentSidebarOpen ? (
+                              <MenuIcon className="h-4 w-4" />
+                            ) : (
+                              <SidebarClosedIcon className="h-4 w-4" />
+                            )}
                           </button>
                           <div>
                             <p className="text-[11px] text-[#9aa8a2]">
@@ -466,26 +482,20 @@ export default function AdminContentScreen() {
                             ✓ Đã lưu tự động
                           </span>
                           {activeUnit?.status === "published" ? (
-                            <span className="rounded-full bg-[#d7f0e5] px-3 py-1 text-[11px] font-semibold text-[#2f5d50]">
+                            <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
                               Đã xuất bản
                             </span>
-                          ) : activeUnit?.status === "edited" ? (
-                            <span className="rounded-full bg-[#f4b24f] px-3 py-1 text-[11px] font-semibold text-white">
-                              Đã sửa đổi
-                            </span>
                           ) : (
-                            <span className="rounded-full px-3 py-1 text-[11px] font-semibold text-[#b4771e] border border-[#f4b24f] bg-white">
+                            <span className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#b4771e] border border-[#f4b24f] bg-[#fdf6e3]">
                               Nháp
                             </span>
                           )}
 
                           <button
                             type="button"
-                            className={`rounded-full px-4 py-1 text-[11px] font-semibold flex items-center gap-2 ${
-                              activeUnit?.status === "published"
-                                ? "bg-[#9aa8a2] text-white"
-                                : "bg-[#2f5d50] text-white"
-                            }`}
+                            className={`rounded-full px-4 py-2 text-[11px] font-semibold flex items-center gap-2 
+                                bg-[#2f5d50] text-white
+                            `}
                           >
                             <EyeIcon className="h-4 w-4" />
                             <span>Xuất bản</span>
@@ -1116,7 +1126,7 @@ export default function AdminContentScreen() {
               </button>
             </div>
             <div className="px-6 pb-6 pt-5">
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-10 text-center">
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9]  px-6 py-10 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef2ee] text-[#7b8b83]">
                   <FileIcon className="h-5 w-5" />
                 </div>
@@ -1176,7 +1186,7 @@ export default function AdminContentScreen() {
             </div>
 
             <div className="px-6 pb-6 pt-5">
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-10 text-center">
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9]  px-6 py-10 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef2ee] text-[#7b8b83]">
                   <FileIcon className="h-5 w-5" />
                 </div>
@@ -1245,7 +1255,7 @@ export default function AdminContentScreen() {
                 MẶT TRƯỚC
               </p>
               <div className="mt-3 space-y-3">
-                <label className="flex flex-col gap-2">
+                <label className="flex flex-col gap-2 text-black">
                   Từ / Cụm từ (tiếng Việt)
                   <input
                     value={vocabForm.term}
@@ -1258,7 +1268,7 @@ export default function AdminContentScreen() {
                 </label>
 
                 <div className="flex gap-4">
-                  <label className="flex-1 flex flex-col gap-2">
+                  <label className="flex-1 flex flex-col gap-2 text-black">
                     Loại từ
                     <input
                       value={vocabForm.type}
@@ -1268,7 +1278,7 @@ export default function AdminContentScreen() {
                       className="h-12 rounded-2xl border border-transparent bg-[#f7f9f7] px-4 text-sm text-[#1f2b27] ring-1 ring-[#eef2ee] focus:outline-none"
                     />
                   </label>
-                  <label className="flex-1 flex flex-col gap-2">
+                  <label className="flex-1 flex flex-col gap-2 text-black">
                     Phát âm (tùy chọn)
                     <input
                       value={vocabForm.pronunciation}
@@ -1285,7 +1295,8 @@ export default function AdminContentScreen() {
                 </div>
 
                 <label className="flex flex-col gap-2">
-                  Ví dụ câu (tiếng Việt)
+                  <div></div>
+
                   <input
                     value={vocabForm.example}
                     onChange={(e) =>
@@ -1299,7 +1310,7 @@ export default function AdminContentScreen() {
                 <p className="text-[11px] font-semibold text-[#2f5d50]">
                   MẶT SAU
                 </p>
-                <label className="flex flex-col gap-2">
+                <label className="flex flex-col gap-2 text-black">
                   Nghĩa tiếng Nhật
                   <input
                     value={vocabForm.meaning}
@@ -1430,10 +1441,10 @@ export default function AdminContentScreen() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[#f0f2f0] px-6 py-4">
-              <div className="flex items-center gap-2 text-sm font-semibold">
+              <div className="flex items-center gap-2 text-sm font-semibold text-black">
                 <PlusIcon className="h-4 w-4 text-[#2f5d50]" />
                 {isAddLocationOpen
-                  ? "+ Thêm địa điểm"
+                  ? "Thêm địa điểm"
                   : "Chỉnh sửa tên địa điểm và biểu tượng"}
               </div>
               <button
@@ -1447,7 +1458,7 @@ export default function AdminContentScreen() {
                 ×
               </button>
             </div>
-            <div className="px-6 pb-6 pt-5 text-xs text-[#7b8b83]">
+            <div className="px-6 pb-6 pt-5 text-xs text-black">
               <label className="flex flex-col gap-2">
                 Tên địa điểm
                 <input
@@ -1474,9 +1485,9 @@ export default function AdminContentScreen() {
                 </p>
               </label>
               <div className="mt-6 flex items-center justify-between text-xs text-[#7b8b83]">
-                <div>
-                  <p className="text-[11px] font-semibold">Trạng thái</p>
-                  <p>Nháp</p>
+                <div className="text-black">
+                  <div className="text-[11px] font-semibold">Trạng thái</div>
+                  <div className="ml-4">Nháp </div>
                 </div>
                 <div className="text-[11px] text-[#9aa8a2]">
                   Tự động thiết lập theo tình huống
@@ -1554,7 +1565,7 @@ export default function AdminContentScreen() {
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <PlusIcon className="h-4 w-4 text-[#2f5d50]" />
                 {isAddSituationOpen
-                  ? "+ Thêm tình huống"
+                  ? "Thêm tình huống"
                   : "Chỉnh sửa tên tình huống"}
               </div>
               <button
@@ -1570,7 +1581,7 @@ export default function AdminContentScreen() {
               </button>
             </div>
             <div className="px-6 pb-6 pt-5 text-xs text-[#7b8b83]">
-              <label className="flex flex-col gap-2">
+              <label className="flex flex-col gap-2 text-black">
                 Tên tình huống
                 <input
                   value={situationForm.title}
@@ -1583,8 +1594,8 @@ export default function AdminContentScreen() {
               </label>
               <div className="mt-6 flex items-center justify-between text-xs text-[#7b8b83]">
                 <div>
-                  <p className="text-[11px] font-semibold">Trạng thái</p>
-                  <p>Nháp</p>
+                  <div className="text-[11px] text-black">Trạng thái</div>
+                  <div className="ml-4 text-black">Nháp</div>
                 </div>
                 <div className="text-[11px] text-[#9aa8a2]">
                   Nhấn "Xuất bản" sau khi thay đổi
@@ -1803,12 +1814,31 @@ export default function AdminContentScreen() {
   );
 }
 
-function StatusDot({ status }: { status: Status }) {
+function StatusDot({
+  status,
+  onClick,
+  ariaLabel,
+}: {
+  status: Status;
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  ariaLabel?: string;
+}) {
   const colors = {
     published: "bg-[#2f5d50]",
     edited: "bg-[#f4b24f]",
     draft: "bg-[#e16f5c]",
   };
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        aria-label={ariaLabel || "Edit"}
+        onClick={onClick}
+        className={`h-2.5 w-2.5 rounded-full ${colors[status]}`}
+      />
+    );
+  }
 
   return <span className={`h-2.5 w-2.5 rounded-full ${colors[status]}`} />;
 }
@@ -1997,6 +2027,25 @@ function MenuIcon({ className }: { className?: string }) {
       <rect x="4" y="4" width="16" height="16" rx="3" />
       <line x1="10" y1="6" x2="10" y2="18" />
       <path d="m16 9-3 3 3 3" />
+    </svg>
+  );
+}
+
+function SidebarClosedIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="5" y1="7" x2="19" y2="7" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <line x1="5" y1="17" x2="19" y2="17" />
     </svg>
   );
 }
