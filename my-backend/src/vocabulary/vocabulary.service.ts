@@ -3,6 +3,7 @@ import * as path from 'path';
 import { GetVocabularyListQueryDto } from './dto/get-vocabulary-list.query';
 import { CreateVocabularyDto } from './dto/create-vocabulary.dto';
 import { UpdateVocabularyDto } from './dto/update-vocabulary.dto';
+import { availableMemory } from 'process';
 
 const models = require(path.resolve(__dirname, '../../src/models'));
 const mongoose = require('mongoose');
@@ -418,6 +419,7 @@ export class VocabularyService {
       id: String(place._id),
       nameVi: place.name_vi,
       nameJa: place.name_ja,
+      avatarUrl: place.avatar_url,
     };
   }
 
