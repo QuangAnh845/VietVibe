@@ -155,9 +155,12 @@ export default function AdminContentScreen() {
   const [expandedIds, setExpandedIds] = useState<string[]>(["super"]);
   const [selectedUnit, setSelectedUnit] = useState<SelectedUnit>(null);
   const [listeningModal, setListeningModal] = useState<ListeningModal>(null);
+  const [contentQuery, setContentQuery] = useState("");
+  const [ambientQuery, setAmbientQuery] = useState("");
   const [editingRow, setEditingRow] = useState<string | null>(null);
   const [deleteRow, setDeleteRow] = useState<string | null>(null);
   const [timestampToast, setTimestampToast] = useState<string | null>(null);
+  const [isAddingRow, setIsAddingRow] = useState(false);
   const [editDraft, setEditDraft] = useState<ScriptDraft>({
     vi: "",
     jp: "",
@@ -236,6 +239,26 @@ export default function AdminContentScreen() {
     return activeLocation.units.find((unit) => unit.id === selectedUnit.unitId);
   }, [selectedUnit, activeLocation]);
 
+  const filteredLocations = useMemo(() => {
+    const normalized = contentQuery.trim().toLowerCase();
+    if (!normalized) return locationsState;
+    return locationsState.filter((location) =>
+      [location.label, ...location.units.map((unit) => unit.title)].some(
+        (value) => value.toLowerCase().includes(normalized),
+      ),
+    );
+  }, [contentQuery, locationsState]);
+
+  const filteredAmbientOptions = useMemo(() => {
+    const normalized = ambientQuery.trim().toLowerCase();
+    if (!normalized) return ambientOptions;
+    return ambientOptions.filter((item) =>
+      [item.title, item.filename].some((value) =>
+        value.toLowerCase().includes(normalized),
+      ),
+    );
+  }, [ambientQuery]);
+
   const startEditRow = (row: (typeof listeningRows)[number]) => {
     setEditingRow(row.index);
     setEditDraft({ vi: row.vi, jp: row.jp, timestamp: row.timestamp });
@@ -247,6 +270,7 @@ export default function AdminContentScreen() {
 
   const resetNewRow = () => {
     setNewRow({ vi: "", jp: "", timestamp: "0:00" });
+    setIsAddingRow(false);
   };
 
   const handleCopyTimestamp = async (rowIndex: string, value: string) => {
@@ -304,7 +328,14 @@ export default function AdminContentScreen() {
 
                     <div className="mt-4 flex items-center gap-2 rounded-full border border-[#e6ece6] bg-white px-4 py-2 text-xs text-[#9aa8a2]">
                       <SearchIcon className="h-4 w-4" />
-                      <span>Tìm kiếm địa điểm hoặc tình huống</span>
+                      <input
+                        value={contentQuery}
+                        onChange={(event) =>
+                          setContentQuery(event.target.value)
+                        }
+                        placeholder="Tìm kiếm địa điểm hoặc tình huống"
+                        className="w-full bg-transparent text-xs text-[#1f2b27] placeholder:text-[#9aa8a2] focus:outline-none"
+                      />
                     </div>
                     <div className="mt-3 flex items-center gap-4 text-[11px] text-[#7b8b83]">
                       <LegendDot color="#2f5d50" />
@@ -317,8 +348,18 @@ export default function AdminContentScreen() {
 
                     <div className="mt-6 flex-1 overflow-y-auto pr-2">
                       <div className="space-y-3">
-                        {locationsState.map((location) => {
+                        {filteredLocations.map((location) => {
                           const isExpanded = expandedIds.includes(location.id);
+                          const normalizedQuery = contentQuery
+                            .trim()
+                            .toLowerCase();
+                          const filteredUnits = normalizedQuery
+                            ? location.units.filter((unit) =>
+                                unit.title
+                                  .toLowerCase()
+                                  .includes(normalizedQuery),
+                              )
+                            : location.units;
                           return (
                             <div key={location.id} className="bg-white">
                               <div className="flex items-center justify-between px-3 py-2">
@@ -390,7 +431,7 @@ export default function AdminContentScreen() {
                                     Thêm tình huống
                                   </button>
                                   <div className="mt-1 space-y-2">
-                                    {location.units.map((unit) => (
+                                    {filteredUnits.map((unit) => (
                                       <button
                                         key={unit.id}
                                         type="button"
@@ -422,7 +463,7 @@ export default function AdminContentScreen() {
                                         />
                                       </button>
                                     ))}
-                                    {location.units.length === 0 ? (
+                                    {filteredUnits.length === 0 ? (
                                       <p className="px-2 pb-2 text-xs text-[#9aa8a2]">
                                         Chưa có tình huống
                                       </p>
@@ -720,6 +761,14 @@ export default function AdminContentScreen() {
                                 <button
                                   type="button"
                                   className="rounded-full bg-[#2f5d50] px-3 py-1 text-[11px] font-semibold text-white"
+                                  onClick={() => {
+                                    setIsAddingRow(true);
+                                    setNewRow({
+                                      vi: "",
+                                      jp: "",
+                                      timestamp: "0:00",
+                                    });
+                                  }}
                                 >
                                   + Thêm câu
                                 </button>
@@ -860,67 +909,70 @@ export default function AdminContentScreen() {
                                       )}
                                     </tr>
                                   ))}
-                                  <tr className="border-t border-[#eef2ee] bg-[#eaf6ef]">
-                                    <td className="px-4 py-3">5</td>
-                                    <td className="px-4 py-3">
-                                      <input
-                                        value={newRow.vi}
-                                        onChange={(event) =>
-                                          setNewRow((prev) => ({
-                                            ...prev,
-                                            vi: event.target.value,
-                                          }))
-                                        }
-                                        placeholder="Nhập câu tiếng Việt..."
-                                        className="h-9 w-full rounded-xl border border-(--var-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
-                                      />
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <input
-                                        value={newRow.jp}
-                                        onChange={(event) =>
-                                          setNewRow((prev) => ({
-                                            ...prev,
-                                            jp: event.target.value,
-                                          }))
-                                        }
-                                        placeholder="Nhập câu tiếng Nhật..."
-                                        className="h-9 w-full rounded-xl border border-(--var-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
-                                      />
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <div className="flex items-center gap-2">
+                                  {isAddingRow ? (
+                                    <tr className="border-t border-[#eef2ee] bg-[#eaf6ef]">
+                                      <td className="px-4 py-3">5</td>
+                                      <td className="px-4 py-3">
                                         <input
-                                          value={newRow.timestamp}
+                                          value={newRow.vi}
                                           onChange={(event) =>
                                             setNewRow((prev) => ({
                                               ...prev,
-                                              timestamp: event.target.value,
+                                              vi: event.target.value,
                                             }))
                                           }
-                                          className="h-9 w-16 rounded-xl border border-(--vv-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
+                                          placeholder="Nhập câu tiếng Việt..."
+                                          className="h-9 w-full rounded-xl border border-(--var-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
                                         />
-                                        <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <div className="flex items-center gap-2">
-                                        <IconButton
-                                          ariaLabel="Save"
-                                          className="border-[#a9d7c1] bg-white text-[#2f5d50]"
-                                        >
-                                          <CheckIcon className="h-4 w-4" />
-                                        </IconButton>
-                                        <IconButton
-                                          ariaLabel="Cancel"
-                                          className="border-[#f0c3c3] bg-white text-[#c65d5d]"
-                                          onClick={resetNewRow}
-                                        >
-                                          <CloseIcon className="h-4 w-4" />
-                                        </IconButton>
-                                      </div>
-                                    </td>
-                                  </tr>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <input
+                                          value={newRow.jp}
+                                          onChange={(event) =>
+                                            setNewRow((prev) => ({
+                                              ...prev,
+                                              jp: event.target.value,
+                                            }))
+                                          }
+                                          placeholder="Nhập câu tiếng Nhật..."
+                                          className="h-9 w-full rounded-xl border border-(--var-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
+                                        />
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            value={newRow.timestamp}
+                                            onChange={(event) =>
+                                              setNewRow((prev) => ({
+                                                ...prev,
+                                                timestamp: event.target.value,
+                                              }))
+                                            }
+                                            className="h-9 w-16 rounded-xl border border-(--vv-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
+                                          />
+                                          <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-2">
+                                          <IconButton
+                                            ariaLabel="Save"
+                                            className="border-[#a9d7c1] bg-white text-[#2f5d50]"
+                                            onClick={resetNewRow}
+                                          >
+                                            <CheckIcon className="h-4 w-4" />
+                                          </IconButton>
+                                          <IconButton
+                                            ariaLabel="Cancel"
+                                            className="border-[#f0c3c3] bg-white text-[#c65d5d]"
+                                            onClick={resetNewRow}
+                                          >
+                                            <CloseIcon className="h-4 w-4" />
+                                          </IconButton>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ) : null}
                                 </tbody>
                               </table>
                             </div>
@@ -1070,12 +1122,17 @@ export default function AdminContentScreen() {
               </div>
               <div className="mt-3 flex items-center gap-2 rounded-2xl border border-[#e6ece6] bg-[#f7f9f7] px-4 py-2 text-xs text-[#9aa8a2]">
                 <SearchIcon className="h-4 w-4" />
-                <span>Tìm âm thanh...</span>
+                <input
+                  value={ambientQuery}
+                  onChange={(event) => setAmbientQuery(event.target.value)}
+                  placeholder="Tìm âm thanh..."
+                  className="w-full bg-transparent text-xs text-[#1f2b27] placeholder:text-[#9aa8a2] focus:outline-none"
+                />
               </div>
             </div>
             <div className="px-6 py-4 text-xs">
               <div className="space-y-3">
-                {ambientOptions.map((item, index) => (
+                {filteredAmbientOptions.map((item, index) => (
                   <label
                     key={item.id}
                     className="flex items-start gap-3 text-[#1f2b27]"

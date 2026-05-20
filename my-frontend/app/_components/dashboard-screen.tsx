@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AdminSidebar from "./admin-sidebar";
 import { useRouter } from "next/navigation";
 
 type ModalType = "activities" | "vocab" | "listening" | "users" | null;
+
+type SortValue = "popular" | "least-popular";
 
 const activities = [
   {
@@ -98,9 +100,107 @@ const users = [
 export default function DashboardScreen() {
   const router = useRouter();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [vocabQuery, setVocabQuery] = useState("");
+  const [listeningQuery, setListeningQuery] = useState("");
+  const [vocabSort, setVocabSort] = useState<SortValue>("popular");
+  const [listeningSort, setListeningSort] = useState<SortValue>("popular");
+  const [showNotification, setShowNotification] = useState(false);
+  const [notificationMode, setNotificationMode] = useState<
+    "login" | "register"
+  >("login");
+
+  const normalizeText = (value: string) => value.trim().toLowerCase();
+  const filterRows = (
+    items: { title: string; meta: string }[],
+    query: string,
+  ) => {
+    const normalized = normalizeText(query);
+    if (!normalized) return items;
+    return items.filter((item) =>
+      item.title.toLowerCase().includes(normalized),
+    );
+  };
+  const sortRows = (
+    items: { title: string; meta: string }[],
+    sortValue: SortValue,
+  ) => {
+    const sorted = [...items].sort((a, b) => {
+      const aValue = Number(a.meta);
+      const bValue = Number(b.meta);
+      return sortValue === "popular" ? bValue - aValue : aValue - bValue;
+    });
+    return sorted;
+  };
+
+  const vocabRows = sortRows(filterRows(vocabTop, vocabQuery), vocabSort);
+  const listeningRows = sortRows(
+    filterRows(listeningTop, listeningQuery),
+    listeningSort,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const authData = localStorage.getItem("vietvibe_auth");
+    const hasSuccess = localStorage.getItem("showLoginSuccess");
+    const mode =
+      (localStorage.getItem("loginSuccessMode") as "login" | "register") ||
+      "login";
+
+    let loggedInAt = "";
+    if (authData) {
+      try {
+        const parsed = JSON.parse(authData) as { loggedInAt?: string };
+        loggedInAt = parsed.loggedInAt || "";
+      } catch {
+        loggedInAt = "";
+      }
+    }
+
+    const lastShown = sessionStorage.getItem("loginToastLastShown") || "";
+    const shouldShow = hasSuccess || (loggedInAt && loggedInAt > lastShown);
+
+    if (!shouldShow) return;
+
+    const timer = window.setTimeout(() => {
+      setShowNotification(true);
+      setNotificationMode(mode);
+    }, 0);
+
+    if (loggedInAt) {
+      sessionStorage.setItem("loginToastLastShown", loggedInAt);
+    }
+    localStorage.removeItem("showLoginSuccess");
+    localStorage.removeItem("loginSuccessMode");
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   return (
     <div className="min-h-screen w-full text-[#1f2b27]">
+      {showNotification ? (
+        <div className="fixed top-4 left-1/2 z-50 w-full max-w-sm -translate-x-1/2 rounded-2xl bg-white p-4 shadow-lg mx-4 flex items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-500 text-white">
+            ✓
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-green-700">
+              {notificationMode === "login"
+                ? "ログインが完了しました！"
+                : "登録が完了しました！"}
+            </p>
+            <p className="text-xs text-green-600">VietVibeへようこそ</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowNotification(false)}
+            className="shrink-0 text-lg leading-none text-gray-400 hover:text-gray-600"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       <div className="relative min-h-screen w-full">
         <AdminSidebar active="dashboard" />
 
@@ -279,10 +379,14 @@ export default function DashboardScreen() {
 
           {activeModal === "vocab" ? (
             <ModalSection title="Từ vựng phổ biến">
-              <ModalSearchBar placeholder="Tìm kiếm địa điểm hoặc tình huống..." />
-              <ModalSortRow />
+              <ModalSearchBar
+                placeholder="Tìm kiếm địa điểm hoặc tình huống..."
+                value={vocabQuery}
+                onChange={setVocabQuery}
+              />
+              <ModalSortRow value={vocabSort} onChange={setVocabSort} />
               <div className="mt-4 space-y-3">
-                {vocabTop.map((item) => (
+                {vocabRows.map((item) => (
                   <ModalRankRow
                     key={`vocab-${item.index}`}
                     index={item.index}
@@ -297,10 +401,14 @@ export default function DashboardScreen() {
 
           {activeModal === "listening" ? (
             <ModalSection title="Bài nghe phổ biến">
-              <ModalSearchBar placeholder="Tìm kiếm địa điểm hoặc tình huống..." />
-              <ModalSortRow />
+              <ModalSearchBar
+                placeholder="Tìm kiếm địa điểm hoặc tình huống..."
+                value={listeningQuery}
+                onChange={setListeningQuery}
+              />
+              <ModalSortRow value={listeningSort} onChange={setListeningSort} />
               <div className="mt-4 space-y-3">
-                {listeningTop.map((item) => (
+                {listeningRows.map((item) => (
                   <ModalRankRow
                     key={`listening-${item.index}`}
                     index={item.index}
@@ -482,22 +590,46 @@ function ModalSection({
   );
 }
 
-function ModalSearchBar({ placeholder }: { placeholder: string }) {
+function ModalSearchBar({
+  placeholder,
+  value,
+  onChange,
+}: {
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <div className="mt-2 flex items-center gap-2 rounded-full bg-[#f6f7f5] px-4 py-2 text-xs text-[#9aa8a2]">
       <SearchIcon className="h-4 w-4" />
-      <span>{placeholder}</span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-transparent text-xs text-[#1f2b27] placeholder:text-[#9aa8a2] focus:outline-none"
+      />
     </div>
   );
 }
 
-function ModalSortRow() {
+function ModalSortRow({
+  value,
+  onChange,
+}: {
+  value: SortValue;
+  onChange: (value: SortValue) => void;
+}) {
   return (
     <div className="mt-3 flex items-center gap-3 text-xs text-[#7b8b83]">
       <span>Sắp xếp:</span>
-      <div className="rounded-full border border-[#dfe5df] bg-white px-3 py-1">
-        Phổ biến nhất
-      </div>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value as SortValue)}
+        className="rounded-full border border-[#dfe5df] bg-white px-3 py-1 text-xs text-[#1f2b27] focus:outline-none"
+      >
+        <option value="popular">Phổ biến nhất</option>
+        <option value="least-popular">Ít phổ biến nhất</option>
+      </select>
     </div>
   );
 }

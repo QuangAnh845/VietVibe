@@ -303,18 +303,43 @@ export default function HomeScreen() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    const authData = localStorage.getItem("vietvibe_auth");
     const hasSuccess = localStorage.getItem("showLoginSuccess");
     const mode =
       (localStorage.getItem("loginSuccessMode") as "login" | "register") ||
       "login";
 
-    if (!hasSuccess) return;
+    let loggedInAt = "";
+    let isAdmin = false;
+
+    if (authData) {
+      try {
+        const parsed = JSON.parse(authData) as {
+          loggedInAt?: string;
+          user?: { role?: string };
+        };
+        loggedInAt = parsed.loggedInAt || "";
+        isAdmin = String(parsed.user?.role || "").toLowerCase() === "admin";
+      } catch {
+        loggedInAt = "";
+      }
+    }
+
+    if (isAdmin) return;
+
+    const lastShown = sessionStorage.getItem("loginToastLastShown") || "";
+    const shouldShow = hasSuccess || (loggedInAt && loggedInAt > lastShown);
+
+    if (!shouldShow) return;
 
     const timer = window.setTimeout(() => {
       setShowNotification(true);
       setNotificationMode(mode);
     }, 0);
 
+    if (loggedInAt) {
+      sessionStorage.setItem("loginToastLastShown", loggedInAt);
+    }
     localStorage.removeItem("showLoginSuccess");
     localStorage.removeItem("loginSuccessMode");
 

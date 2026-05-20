@@ -38,6 +38,7 @@ export default function ProfileScreen() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
 
   const profileInitials = profileName
     .split(" ")
@@ -55,13 +56,13 @@ export default function ProfileScreen() {
   };
 
   const openNameModal = () => {
-    setNameInput(profileName);
+    setNameInput("");
     setNameError("");
     setActiveModal("name");
   };
 
   const openEmailModal = () => {
-    setEmailInput(profileEmail);
+    setEmailInput("");
     setEmailError("");
     setActiveModal("email");
   };
@@ -117,6 +118,7 @@ export default function ProfileScreen() {
     if (!avatarFileName || avatarError) {
       return;
     }
+    setToastMessage("アバターを更新しました。");
     closeModal();
   };
 
@@ -127,6 +129,7 @@ export default function ProfileScreen() {
       return;
     }
     setProfileName(nextName);
+    setToastMessage("ユーザー名を更新しました。");
     closeModal();
   };
 
@@ -137,6 +140,7 @@ export default function ProfileScreen() {
       return;
     }
     setProfileEmail(nextEmail);
+    setToastMessage("メールアドレスを更新しました。");
     closeModal();
   };
 
@@ -159,11 +163,45 @@ export default function ProfileScreen() {
       );
       return;
     }
+    setToastMessage("パスワードを更新しました。");
     closeModal();
   };
 
   return (
     <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
+      {toastMessage ? (
+        <div className="fixed top-4 left-1/2 z-50 w-full max-w-sm -translate-x-1/2 rounded-2xl bg-white p-4 shadow-lg mx-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d8eee2]">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="h-6 w-6 text-[#2f5d50]"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+              />
+            </svg>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-green-700">
+              {toastMessage}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToastMessage("")}
+            className="shrink-0 text-lg leading-none text-gray-400 hover:text-gray-600"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       <div className="mx-auto flex w-full max-w-105 flex-col gap-6 px-5 pb-10 pt-8">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold">プロフィール</h1>
@@ -332,9 +370,6 @@ export default function ProfileScreen() {
             {activeModal === "name" ? (
               <div>
                 <h2 className="text-2xl font-semibold">ユーザー名を更新</h2>
-                <p className="mt-2 text-lg text-(--vv-muted)">
-                  現在: {profileName}
-                </p>
 
                 <label className="mt-8 block text-[20px] font-semibold text-foreground">
                   新しいユーザー名
@@ -349,7 +384,7 @@ export default function ProfileScreen() {
                     }
                   }}
                   className="mt-3 h-14 w-full rounded-2xl bg-[#f5f6f4] px-4 text-xl text-foreground outline-none ring-1 ring-transparent focus:ring-(--vv-accent)"
-                  placeholder="user_name"
+                  placeholder="ユーザー名を入力..."
                 />
 
                 {nameError ? (
@@ -381,9 +416,6 @@ export default function ProfileScreen() {
             {activeModal === "email" ? (
               <div>
                 <h2 className="text-2xl font-semibold">メールアドレスを更新</h2>
-                <p className="mt-2 text-lg text-(--vv-muted)">
-                  現在: {profileEmail}
-                </p>
 
                 <label className="mt-8 block text-[20px] font-semibold text-foreground">
                   新しいメールアドレス
@@ -398,7 +430,7 @@ export default function ProfileScreen() {
                     }
                   }}
                   className="mt-3 h-14 w-full rounded-2xl bg-[#f5f6f4] px-4 text-xl text-foreground outline-none ring-1 ring-transparent focus:ring-(--vv-accent)"
-                  placeholder="your@email.com"
+                  placeholder="メールアドレスを入力..."
                 />
 
                 {emailError ? (
@@ -439,6 +471,7 @@ export default function ProfileScreen() {
                     label="現在のパスワード"
                     value={currentPassword}
                     onChange={setCurrentPassword}
+                    placeholder="*********"
                     visible={showCurrentPassword}
                     onToggleVisibility={() =>
                       setShowCurrentPassword((prev) => !prev)
@@ -448,6 +481,7 @@ export default function ProfileScreen() {
                     label="新しいパスワード"
                     value={newPassword}
                     onChange={setNewPassword}
+                    placeholder="新しいパスワードを入力..."
                     visible={showNewPassword}
                     onToggleVisibility={() =>
                       setShowNewPassword((prev) => !prev)
@@ -457,6 +491,7 @@ export default function ProfileScreen() {
                     label="新しいパスワードを確認"
                     value={confirmPassword}
                     onChange={setConfirmPassword}
+                    placeholder="新しいパスワードを再入力..."
                     visible={showConfirmPassword}
                     onToggleVisibility={() =>
                       setShowConfirmPassword((prev) => !prev)
@@ -500,12 +535,14 @@ function PasswordField({
   label,
   value,
   onChange,
+  placeholder,
   visible,
   onToggleVisibility,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  placeholder: string;
   visible: boolean;
   onToggleVisibility: () => void;
 }) {
@@ -517,6 +554,7 @@ function PasswordField({
           type={visible ? "text" : "password"}
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
           className="h-14 w-full rounded-2xl bg-[#f5f6f4] px-4 pr-12 text-xl text-foreground outline-none ring-1 ring-transparent focus:ring-(--vv-accent)"
         />
         <button

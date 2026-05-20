@@ -72,14 +72,24 @@ type FilterValue = (typeof filters)[number];
 
 export default function AdminAudioScreen() {
   const [activeFilter, setActiveFilter] = useState<FilterValue>("Tất cả");
+  const [query, setQuery] = useState("");
   const [activeModal, setActiveModal] = useState<AudioModal>(null);
   const [selectedItem, setSelectedItem] = useState<AudioItem | null>(null);
   const [showToast, setShowToast] = useState(false);
 
   const filteredItems = useMemo(() => {
-    if (activeFilter === "Tất cả") return audioItems;
-    return audioItems.filter((item) => item.category === activeFilter);
-  }, [activeFilter]);
+    const normalized = query.trim().toLowerCase();
+    const itemsByFilter =
+      activeFilter === "Tất cả"
+        ? audioItems
+        : audioItems.filter((item) => item.category === activeFilter);
+    if (!normalized) return itemsByFilter;
+    return itemsByFilter.filter((item) =>
+      [item.title, item.filename].some((value) =>
+        value.toLowerCase().includes(normalized),
+      ),
+    );
+  }, [activeFilter, query]);
 
   const openModal = (modal: AudioModal, item?: AudioItem) => {
     setSelectedItem(item ?? null);
@@ -119,7 +129,12 @@ export default function AdminAudioScreen() {
               <div className="mt-6 flex items-center gap-3">
                 <div className="flex flex-1 items-center gap-2 rounded-[14px] border border-[#e6ece6] bg-(--vv-search) px-4 py-2 text-xs text-[#9aa8a2]">
                   <SearchIcon className="h-4 w-4" />
-                  <span>Tìm kiếm theo tên hoặc file...</span>
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Tìm kiếm theo tên hoặc file..."
+                    className="w-full bg-transparent text-xs text-[#1f2b27] placeholder:text-[#9aa8a2] focus:outline-none"
+                  />
                 </div>
                 <div className="flex items-center gap-2 text-xs">
                   {filters.map((filter) => (

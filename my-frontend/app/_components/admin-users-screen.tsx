@@ -76,6 +76,7 @@ const progressItems: ProgressItem[] = [
 
 export default function AdminUsersScreen() {
   const [query, setQuery] = useState("");
+  const [progressQuery, setProgressQuery] = useState("");
   const [activeModal, setActiveModal] = useState<UserModal>(null);
   const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
   const [showToast, setShowToast] = useState(false);
@@ -89,6 +90,14 @@ export default function AdminUsersScreen() {
       ),
     );
   }, [query]);
+
+  const filteredProgressItems = useMemo(() => {
+    const normalized = progressQuery.trim().toLowerCase();
+    if (!normalized) return progressItems;
+    return progressItems.filter((item) =>
+      item.title.toLowerCase().includes(normalized),
+    );
+  }, [progressQuery]);
 
   const openModal = (modal: UserModal, user: UserRow) => {
     setSelectedUser(user);
@@ -234,14 +243,19 @@ export default function AdminUsersScreen() {
             <div className="mt-5 rounded-2xl border border-[#eef2ee] bg-[#f7f9f7] px-4 py-2 text-xs text-[#9aa8a2]">
               <div className="flex items-center gap-2">
                 <SearchIcon className="h-4 w-4" />
-                Tìm kiếm địa điểm hoặc tình huống...
+                <input
+                  value={progressQuery}
+                  onChange={(event) => setProgressQuery(event.target.value)}
+                  placeholder="Tìm kiếm địa điểm hoặc tình huống..."
+                  className="w-full bg-transparent text-xs text-[#1f2b27] placeholder:text-[#9aa8a2] focus:outline-none"
+                />
               </div>
             </div>
 
             <div className="mt-4">
               <p className="text-sm font-semibold">Tiến độ theo tình huống</p>
               <div className="mt-3 space-y-4">
-                {progressItems.map((item) => (
+                {filteredProgressItems.map((item) => (
                   <div
                     key={item.id}
                     className="rounded-2xl border border-[#eef2ee] bg-white p-4"
