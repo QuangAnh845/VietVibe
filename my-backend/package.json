@@ -9,7 +9,7 @@
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
-    "start:dev": "node scripts/kill-port.js 3001 && npm run seed:all && nest start --watch",
+    "start:dev": "node scripts/kill-port.js 3001 && nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "dev:clean": "node scripts/kill-port.js 3001",
