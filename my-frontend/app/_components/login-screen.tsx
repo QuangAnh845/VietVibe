@@ -2,10 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 type AuthMode = "login" | "register";
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
 
 const validateEmail = (email: string) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -14,6 +13,7 @@ const validateEmail = (email: string) => {
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { login, register } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -23,6 +23,7 @@ export default function LoginScreen() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordState, setForgotPasswordState] = useState<
     "form" | "sent"
@@ -30,21 +31,6 @@ export default function LoginScreen() {
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
   const [forgotPasswordError, setForgotPasswordError] = useState(false);
-
-  const saveAuthData = (
-    token: string,
-    user: { id: string; email: string; user_name: string; role: string },
-  ) => {
-    if (typeof window === "undefined") return;
-
-    const authData = {
-      access_token: token,
-      user,
-      loggedInAt: new Date().toISOString(),
-    };
-
-    localStorage.setItem("vietvibe_auth", JSON.stringify(authData));
-  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -75,36 +61,32 @@ export default function LoginScreen() {
       return;
     }
 
-    const endpoint = `${API_BASE_URL}/auth/${mode}`;
-    const body =
-      mode === "login" ? { email, password } : { name, email, password };
+    setIsLoading(true);
 
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        setIsError(true);
-        setMessage(result?.message || "エラーが発生しました。");
-        return;
+      if (mode === "login") {
+        await login(email, password);
+      } else {
+        await register(name, email, password);
       }
-
-      saveAuthData(result.access_token, result.user);
+      
       localStorage.setItem("showLoginSuccess", "true");
       localStorage.setItem("loginSuccessMode", mode);
-      const role = String(result?.user?.role || "").toLowerCase();
+      
+      // Navigate to dashboard or home depending on user role
+      // Since `useAuth` saves token and user, we could read it from local storage or wait for next render.
+      // But simple approach is read from localStorage here or just redirect to home and let protected routes handle it.
+      const userStr = localStorage.getItem("user");
+      const user = userStr ? JSON.parse(userStr) : null;
+      const role = String(user?.role || "").toLowerCase();
+      
       router.push(role === "admin" ? "/dashboard" : "/");
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setIsError(true);
-      setMessage(
-        "サーバーに接続できません。バックエンドサービスが起動しているか、http://localhost:3001 にアクセスできるか確認してください。",
-      );
+      setMessage(error.message || "エラーが発生しました。");
+    } finally {
+      setIsLoading(false);
     }
   };
 

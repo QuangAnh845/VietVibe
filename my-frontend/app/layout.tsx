@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Noto_Sans_JP, Playfair_Display } from "next/font/google";
+import { AuthProvider } from "@/context/AuthContext";
 import "./globals.css";
 
 const vvSans = Noto_Sans_JP({
@@ -30,7 +31,7 @@ export default function RootLayout({
       className={`${vvSans.variable} ${vvDisplay.variable} h-full antialiased `}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
