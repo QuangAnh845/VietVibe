@@ -55,6 +55,7 @@ export class LoginService {
         email: user.email,
         user_name: user.user_name,
         role: user.role,
+        avatar_url: user.avatar_url,
       },
     };
   }
@@ -97,6 +98,7 @@ export class LoginService {
         email: user.email,
         user_name: user.user_name,
         role: user.role,
+        avatar_url: user.avatar_url,
       },
     };
   }

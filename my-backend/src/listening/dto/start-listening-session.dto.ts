@@ -22,13 +22,6 @@ import {
 } from '../listening-session.constants';
 
 export class StartListeningSessionDto {
-  @ApiProperty({
-    type: String,
-    description: 'Learner user id',
-    example: '6a0062476ba452f577db7e70',
-  })
-  @IsMongoId()
-  userId: string;
 
   @ApiPropertyOptional({
     type: Number,

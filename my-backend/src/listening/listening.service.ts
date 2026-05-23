@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -242,9 +243,9 @@ export class ListeningService {
     );
   }
 
-  async startListeningSession(id: string, startDto: StartListeningSessionDto) {
+  async startListeningSession(id: string, userIdString: string, startDto: StartListeningSessionDto) {
     const lesson = await this.findLessonOrThrow(id);
-    const userId = this.toObjectId(startDto.userId);
+    const userId = this.toObjectId(userIdString);
     await this.findUserOrThrow(userId);
 
     const existingProgress = await UserProgress.findOne({
@@ -307,8 +308,8 @@ export class ListeningService {
     return this.buildSessionResponse(session, lesson, transcriptLines);
   }
 
-  async getListeningSessionById(sessionId: string) {
-    const session = await this.findSessionOrThrow(sessionId);
+  async getListeningSessionById(sessionId: string, userIdString: string) {
+    const session = await this.findSessionOrThrow(sessionId, userIdString);
     const lesson = await this.findLessonOrThrow(String(session.lesson_id));
     const transcriptLines = await this.getTranscriptLines(lesson._id);
 
@@ -317,9 +318,10 @@ export class ListeningService {
 
   async updateListeningSession(
     sessionId: string,
+    userIdString: string,
     updateDto: UpdateListeningSessionDto,
   ) {
-    const session = await this.findSessionOrThrow(sessionId);
+    const session = await this.findSessionOrThrow(sessionId, userIdString);
     const lesson = await this.findLessonOrThrow(String(session.lesson_id));
     const transcriptLines = await this.getTranscriptLines(lesson._id);
     const settings = this.resolveSessionSettings(updateDto, {
@@ -375,8 +377,8 @@ export class ListeningService {
     return this.buildSessionResponse(session, lesson, transcriptLines);
   }
 
-  async completeListeningSession(sessionId: string) {
-    const session = await this.findSessionOrThrow(sessionId);
+  async completeListeningSession(sessionId: string, userIdString: string) {
+    const session = await this.findSessionOrThrow(sessionId, userIdString);
     const lesson = await this.findLessonOrThrow(String(session.lesson_id));
     const transcriptLines = await this.getTranscriptLines(lesson._id);
     const now = new Date();
@@ -408,10 +410,14 @@ export class ListeningService {
     return lesson;
   }
 
-  private async findSessionOrThrow(id: string) {
+  private async findSessionOrThrow(id: string, userIdString?: string) {
     const session = await ListeningSession.findById(this.toObjectId(id));
     if (!session) {
       throw new NotFoundException('Không tìm thấy phiên nghe.');
+    }
+
+    if (userIdString && String(session.user_id) !== userIdString) {
+      throw new ForbiddenException('Bạn không có quyền truy cập phiên nghe này.');
     }
 
     return session;

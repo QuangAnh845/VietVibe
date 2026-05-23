@@ -5,9 +5,11 @@ import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 type PlayMode = "study" | "continuous";
-type AmbientSound = "cafe" | "road" | "market" | "office" | "off";
+type AmbientSound = string;
 
 const speeds = ["0.75x", "1.0x"] as const;
+
+type EnvironmentSoundOption = { id: string; label: string; audioUrl?: string };
 
 type TranscriptLine = {
   id: string;
@@ -28,7 +30,7 @@ type ListeningLesson = {
   transcriptLines: TranscriptLine[];
 };
 
-const ambientOptions: Array<{ id: AmbientSound; label: string }> = [
+const defaultAmbientOptions: EnvironmentSoundOption[] = [
   { id: "cafe", label: "カフェ" },
   { id: "road", label: "道路" },
   { id: "market", label: "市場" },
@@ -54,6 +56,7 @@ export default function ListeningScreen() {
   const searchParams = useSearchParams();
   const learningUnitId = searchParams.get("learningUnitId");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ambientAudioRef = useRef<HTMLAudioElement | null>(null);
   // Persisted settings (applied immediately)
   const [speed, setSpeed] = useState<(typeof speeds)[number]>("1.0x");
   const [playMode, setPlayMode] = useState<PlayMode>("study");
@@ -76,23 +79,77 @@ export default function ListeningScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [ambientOptions, setAmbientOptions] = useState<EnvironmentSoundOption[]>(defaultAmbientOptions);
 
-  // Load settings from localStorage on mount
+  // Load settings from API or localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (stored) {
+    let mounted = true;
+    const loadSettingsAndOptions = async () => {
+      // Fetch ambient options
       try {
-        const settings: StoredSettings = JSON.parse(stored);
-        setSpeed(settings.speed);
-        setPlayMode(settings.playMode);
-        setAmbientSound(settings.ambientSound);
-        setAmbientVolume(settings.ambientVolume);
-        setTempAmbientSound(settings.ambientSound);
-        setTempAmbientVolume(settings.ambientVolume);
-      } catch (error) {
-        console.error("Failed to load settings:", error);
+        const envRes = await fetch(`${BACKEND_URL}/environment-sounds`);
+        if (envRes.ok) {
+          const envData = await envRes.json();
+          if (envData.data && envData.data.length > 0) {
+            const mapped = envData.data.map((s: any) => ({
+              id: s.id,
+              label: s.name,
+              audioUrl: s.audio_url,
+            }));
+            mapped.push({ id: "off", label: "オフ" });
+            if (mounted) setAmbientOptions(mapped);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load environment sounds", e);
       }
-    }
+
+      // Fetch user settings
+      let authData = null;
+      try {
+        authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
+      } catch (e) {}
+
+      if (authData?.accessToken) {
+        try {
+          const res = await fetch(`${BACKEND_URL}/users/me/listening-settings`, {
+            headers: { Authorization: `Bearer ${authData.accessToken}` }
+          });
+          if (res.ok) {
+            const settings = await res.json();
+            if (mounted && Object.keys(settings).length > 0) {
+              setSpeed(settings.playback_speed === 0.75 ? "0.75x" : "1.0x");
+              setPlayMode(settings.auto_pause ? "study" : "continuous");
+              setAmbientSound(settings.environment_sound_id || "off");
+              setAmbientVolume(settings.environment_volume ?? 40);
+              setTempAmbientSound(settings.environment_sound_id || "off");
+              setTempAmbientVolume(settings.environment_volume ?? 40);
+              return; // skip localStorage
+            }
+          }
+        } catch (e) {
+          console.error("Failed to fetch listening settings", e);
+        }
+      }
+
+      // Fallback to localStorage
+      const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (stored && mounted) {
+        try {
+          const settings: StoredSettings = JSON.parse(stored);
+          setSpeed(settings.speed);
+          setPlayMode(settings.playMode);
+          setAmbientSound(settings.ambientSound);
+          setAmbientVolume(settings.ambientVolume);
+          setTempAmbientSound(settings.ambientSound);
+          setTempAmbientVolume(settings.ambientVolume);
+        } catch (error) {
+          console.error("Failed to load settings:", error);
+        }
+      }
+    };
+    void loadSettingsAndOptions();
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
@@ -237,7 +294,7 @@ export default function ListeningScreen() {
   }, [learningUnitId]);
 
   // Persist settings whenever they change
-  const persistSettings = (
+  const persistSettings = async (
     newSpeed: (typeof speeds)[number],
     newPlayMode: PlayMode,
     newAmbientSound: AmbientSound,
@@ -250,6 +307,31 @@ export default function ListeningScreen() {
       ambientVolume: newAmbientVolume,
     };
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+
+    let authData = null;
+    try {
+      authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
+    } catch (e) {}
+
+    if (authData?.accessToken) {
+      try {
+        await fetch(`${BACKEND_URL}/users/me/listening-settings`, {
+          method: 'PUT',
+          headers: { 
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authData.accessToken}` 
+          },
+          body: JSON.stringify({
+            playback_speed: newSpeed === "0.75x" ? 0.75 : 1.0,
+            auto_pause: newPlayMode === "study",
+            environment_sound_id: newAmbientSound === "off" ? null : newAmbientSound,
+            environment_volume: newAmbientVolume
+          })
+        });
+      } catch (e) {
+        console.error("Failed to save settings to API", e);
+      }
+    }
   };
 
   // Handle speed change (immediate, no reset of progress)
@@ -296,6 +378,27 @@ export default function ListeningScreen() {
   // Compute resolved audio src once to avoid passing an empty string
   // into the `src` attribute (browsers warn and may re-request the page).
   const resolvedAudioSrc = resolveAudioUrl(lesson?.audioUrl ?? "");
+
+  const selectedAmbientOption = ambientOptions.find((o) => o.id === ambientSound);
+  const ambientAudioSrc = selectedAmbientOption?.audioUrl ? resolveAudioUrl(selectedAmbientOption.audioUrl) : "";
+
+  // Synchronize ambient sound with main player state, volume, and selection
+  useEffect(() => {
+    const ambientAudio = ambientAudioRef.current;
+    if (!ambientAudio) return;
+
+    // 1. Update volume
+    ambientAudio.volume = ambientVolume / 100;
+
+    // 2. Play or Pause based on main audio state and setting
+    if (isPlaying && ambientSound !== "off") {
+      ambientAudio.play().catch((err) => {
+        console.error("Failed to play ambient audio:", err);
+      });
+    } else {
+      ambientAudio.pause();
+    }
+  }, [isPlaying, ambientSound, ambientVolume, ambientAudioSrc]);
 
   const getLineIndexForTime = (time: number) => {
     if (lines.length === 0) return -1;
@@ -351,6 +454,7 @@ export default function ListeningScreen() {
 
     audio.pause();
     setIsPlaying(false);
+    syncProgressToAPI(audio.currentTime);
   };
 
   const handleAudioTimeUpdate = () => {
@@ -371,6 +475,27 @@ export default function ListeningScreen() {
     if (lines.length > 0) {
       setCurrentIndex(lines.length - 1);
       setCurrentTime(lessonDuration);
+    }
+    syncProgressToAPI(lessonDuration);
+  };
+
+  const syncProgressToAPI = async (progressSeconds: number) => {
+    if (!lesson?.id) return;
+    let authData = null;
+    try { authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}"); } catch (e) {}
+    if (authData?.accessToken) {
+      try {
+        await fetch(`${BACKEND_URL}/situations/${lesson.id}/progress`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authData.accessToken}` 
+          },
+          body: JSON.stringify({ progress_seconds: progressSeconds })
+        });
+      } catch (e) {
+        console.error("Failed to update progress to API", e);
+      }
     }
   };
 
@@ -409,6 +534,7 @@ export default function ListeningScreen() {
       }
     }
 
+    syncProgressToAPI(lessonDuration);
     router.push("/");
   };
 
@@ -566,6 +692,16 @@ export default function ListeningScreen() {
             onEnded={handleAudioEnded}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
+            className="hidden"
+          />
+        ) : null}
+
+        {ambientAudioSrc ? (
+          <audio
+            ref={ambientAudioRef}
+            src={ambientAudioSrc}
+            preload="auto"
+            loop
             className="hidden"
           />
         ) : null}

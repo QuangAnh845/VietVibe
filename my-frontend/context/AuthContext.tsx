@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { authService } from '@/lib/auth.service';
 import { useTokenStorage } from '@/hooks/useTokenStorage';
+import { userService } from '@/lib/user.service';
 
 interface User {
   id: string;
@@ -41,12 +42,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Initialize auth state
   useEffect(() => {
-    const storedUser = getUser();
-    if (storedUser) {
-      setUser(storedUser);
-    }
-    setIsLoading(false);
-  }, [getUser]);
+    let isMounted = true;
+    const initializeUser = async () => {
+      const storedUser = getUser();
+      if (storedUser) {
+        setUser(storedUser);
+        
+        const token = getAccessToken();
+        if (token) {
+          try {
+            const profile = await userService.getProfile(token);
+            if (isMounted) {
+              const mappedUser = {
+                ...storedUser,
+                ...profile,
+                id: profile._id || storedUser.id,
+              };
+              setUser(mappedUser);
+              setTokens(token, getRefreshToken()!, mappedUser);
+            }
+          } catch (error) {
+            console.error('Failed to fetch profile', error);
+          }
+        }
+      }
+      if (isMounted) {
+        setIsLoading(false);
+      }
+    };
+    initializeUser();
+    return () => {
+      isMounted = false;
+    };
+  }, [getUser, getAccessToken, getRefreshToken, setTokens]);
 
   const login = useCallback(
     async (email: string, password: string) => {
