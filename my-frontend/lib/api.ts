@@ -7,7 +7,7 @@ export const apiCall = async (
   options: RequestInit = {},
   useAuthContext?: ReturnType<typeof useAuth>,
 ): Promise<any> => {
-  const accessToken = useAuthContext?.getAccessToken?.() || (typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null);
+  const accessToken = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,

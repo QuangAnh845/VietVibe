@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -23,10 +24,15 @@ import {
 } from '@nestjs/swagger';
 import { AudioProcessingQueryDto } from './dto/audio-processing-query.dto';
 import { CreateListeningDto } from './dto/create-listening.dto';
-
+import { CreateLearningUnitDto } from './dto/create-learning-unit.dto';
+import { CreatePlaceDto } from './dto/create-place.dto';
+import { CreateSituationDto } from './dto/create-situation.dto';
 import { StartListeningSessionDto } from './dto/start-listening-session.dto';
+import { UpdateLearningUnitDto } from './dto/update-learning-unit.dto';
 import { UpdateListeningDto } from './dto/update-listening.dto';
 import { UpdateListeningSessionDto } from './dto/update-listening-session.dto';
+import { UpdatePlaceDto } from './dto/update-place.dto';
+import { UpdateSituationDto } from './dto/update-situation.dto';
 import { ListeningService } from './listening.service';
 import { JwtAuthGuard } from '../login/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../login/guards/roles.guard.js';
@@ -36,6 +42,129 @@ import { Roles } from '../login/decorators/roles.decorator.js';
 @Controller('listening')
 export class ListeningController {
   constructor(private readonly listeningService: ListeningService) {}
+
+  @Post('admin/create')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @HttpCode(201)
+  @ApiOperation({
+    summary: '[ADMIN] Create a listening lesson',
+    description: 'Only admin can create a listening lesson',
+  })
+  @ApiCreatedResponse({ description: 'Listening lesson created successfully' })
+  createListeningLesson(@Body() createDto: CreateListeningDto) {
+    return this.listeningService.createListeningLesson(createDto);
+  }
+
+  @Post('admin/places')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @HttpCode(201)
+  @ApiOperation({ summary: '[ADMIN] Create a place' })
+  @ApiCreatedResponse({ description: 'Place created successfully' })
+  createPlace(@Body() createDto: CreatePlaceDto) {
+    return this.listeningService.createPlace(createDto);
+  }
+
+  @Put('admin/places/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Update a place' })
+  @ApiParam({ name: 'id', description: 'Place id' })
+  @ApiOkResponse({ description: 'Place updated successfully' })
+  updatePlace(@Param('id') id: string, @Body() updateDto: UpdatePlaceDto) {
+    return this.listeningService.updatePlace(id, updateDto);
+  }
+
+  @Delete('admin/places/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Delete a place' })
+  @ApiParam({ name: 'id', description: 'Place id' })
+  @ApiOkResponse({ description: 'Place deleted successfully' })
+  deletePlace(@Param('id') id: string) {
+    return this.listeningService.deletePlace(id);
+  }
+
+  @Post('admin/situations')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @HttpCode(201)
+  @ApiOperation({ summary: '[ADMIN] Create a situation' })
+  @ApiCreatedResponse({ description: 'Situation created successfully' })
+  createSituation(@Body() createDto: CreateSituationDto) {
+    return this.listeningService.createSituation(createDto);
+  }
+
+  @Put('admin/situations/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Update a situation' })
+  @ApiParam({ name: 'id', description: 'Situation id' })
+  @ApiOkResponse({ description: 'Situation updated successfully' })
+  updateSituation(@Param('id') id: string, @Body() updateDto: UpdateSituationDto) {
+    return this.listeningService.updateSituation(id, updateDto);
+  }
+
+  @Delete('admin/situations/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Delete a situation' })
+  @ApiParam({ name: 'id', description: 'Situation id' })
+  @ApiOkResponse({ description: 'Situation deleted successfully' })
+  deleteSituation(@Param('id') id: string) {
+    return this.listeningService.deleteSituation(id);
+  }
+
+  @Get('admin/learning-units')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Get all learning units' })
+  @ApiOkResponse({ description: 'List of learning units' })
+  getAllLearningUnits() {
+    return this.listeningService.getAllLearningUnits();
+  }
+
+  @Post('admin/learning-units')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @HttpCode(201)
+  @ApiOperation({ summary: '[ADMIN] Create a learning unit' })
+  @ApiCreatedResponse({ description: 'Learning unit created successfully' })
+  createLearningUnit(@Body() createDto: CreateLearningUnitDto) {
+    return this.listeningService.createLearningUnit(createDto);
+  }
+
+  @Put('admin/learning-units/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Update a learning unit' })
+  @ApiParam({ name: 'id', description: 'Learning unit id' })
+  @ApiOkResponse({ description: 'Learning unit updated successfully' })
+  updateLearningUnit(@Param('id') id: string, @Body() updateDto: UpdateLearningUnitDto) {
+    return this.listeningService.updateLearningUnit(id, updateDto);
+  }
+
+  @Delete('admin/learning-units/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Delete a learning unit' })
+  @ApiParam({ name: 'id', description: 'Learning unit id' })
+  @ApiOkResponse({ description: 'Learning unit deleted successfully' })
+  deleteLearningUnit(@Param('id') id: string) {
+    return this.listeningService.deleteLearningUnit(id);
+  }
 
   @Get('places')
   @ApiOperation({ summary: 'Get all places' })
