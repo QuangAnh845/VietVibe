@@ -252,7 +252,7 @@ export class VocabularyService {
         ...(updateDto.note !== undefined && { note: updateDto.note?.trim() || null }),
         ...(updateDto.tag !== undefined && { tag: updateDto.tag?.trim() || null }),
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate({
       path: 'learning_unit_id',
       select: 'title_vi title_ja situation_id level_id',

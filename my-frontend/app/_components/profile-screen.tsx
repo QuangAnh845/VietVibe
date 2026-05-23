@@ -1,7 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { userService } from "@/lib/user.service";
+import { useTokenStorage } from "@/hooks/useTokenStorage";
 
 type ProfileModal = "avatar" | "name" | "email" | "password" | null;
 
@@ -16,11 +19,22 @@ const ALLOWED_AVATAR_TYPES = [
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { user, updateUser, logout } = useAuth();
+  const { getAccessToken } = useTokenStorage();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [profileName, setProfileName] = useState("Thanh Ha");
-  const [profileEmail, setProfileEmail] = useState("thanhha@gmail.com");
+  const [profileName, setProfileName] = useState(user?.user_name || user?.name || "User");
+  const [profileEmail, setProfileEmail] = useState(user?.email || "");
+  const [avatarUrl, setAvatarUrl] = useState((user as any)?.avatar_url || "");
   const [activeModal, setActiveModal] = useState<ProfileModal>(null);
+
+  useEffect(() => {
+    if (user) {
+      setProfileName(user.user_name || user.name || "User");
+      setProfileEmail(user.email || "");
+      setAvatarUrl((user as any).avatar_url || "");
+    }
+  }, [user]);
 
   const [avatarFileName, setAvatarFileName] = useState("");
   const [avatarError, setAvatarError] = useState("");
@@ -78,10 +92,8 @@ export default function ProfileScreen() {
     setActiveModal("password");
   };
 
-  const handleLogout = () => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("vietvibe_auth");
-    }
+  const handleLogout = async () => {
+    await logout();
     router.push("/login");
   };
 
@@ -114,37 +126,60 @@ export default function ProfileScreen() {
     setAvatarError("");
   };
 
-  const handleAvatarUpload = () => {
-    if (!avatarFileName || avatarError) {
+  const handleAvatarUpload = async () => {
+    if (!avatarFileName || avatarError || !fileInputRef.current?.files?.[0]) {
       return;
     }
-    setToastMessage("アバターを更新しました。");
-    closeModal();
+    try {
+      const token = getAccessToken();
+      if (!token) throw new Error("No token");
+      const file = fileInputRef.current.files[0];
+      const updatedUser = await userService.uploadAvatar(token, file);
+      updateUser(updatedUser);
+      setToastMessage("アバターを更新しました。");
+      closeModal();
+    } catch (e: any) {
+      setAvatarError(e.message || "Failed to upload avatar");
+    }
   };
 
-  const handleNameSave = () => {
+  const handleNameSave = async () => {
     const nextName = nameInput.trim();
     if (!/^[A-Za-z0-9_]{3,20}$/.test(nextName)) {
       setNameError("ユーザー名は英数字とアンダースコアのみ使用できます。");
       return;
     }
-    setProfileName(nextName);
-    setToastMessage("ユーザー名を更新しました。");
-    closeModal();
+    try {
+      const token = getAccessToken();
+      if (!token) throw new Error("No token");
+      const updatedUser = await userService.updateProfile(token, { user_name: nextName });
+      updateUser(updatedUser);
+      setToastMessage("ユーザー名を更新しました。");
+      closeModal();
+    } catch (e: any) {
+      setNameError(e.message || "Failed to update name");
+    }
   };
 
-  const handleEmailSave = () => {
+  const handleEmailSave = async () => {
     const nextEmail = emailInput.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
       setEmailError("メールアドレスの形式が正しくありません。");
       return;
     }
-    setProfileEmail(nextEmail);
-    setToastMessage("メールアドレスを更新しました。");
-    closeModal();
+    try {
+      const token = getAccessToken();
+      if (!token) throw new Error("No token");
+      const updatedUser = await userService.updateProfile(token, { email: nextEmail });
+      updateUser(updatedUser);
+      setToastMessage("メールアドレスを更新しました。");
+      closeModal();
+    } catch (e: any) {
+      setEmailError(e.message || "Email may already be in use");
+    }
   };
 
-  const handlePasswordSave = () => {
+  const handlePasswordSave = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
       setPasswordError("すべてのパスワード項目を入力してください。");
       return;
@@ -163,8 +198,18 @@ export default function ProfileScreen() {
       );
       return;
     }
-    setToastMessage("パスワードを更新しました。");
-    closeModal();
+    try {
+      const token = getAccessToken();
+      if (!token) throw new Error("No token");
+      await userService.updatePassword(token, {
+        currentPassword,
+        newPassword,
+      });
+      setToastMessage("パスワードを更新しました。");
+      closeModal();
+    } catch (e: any) {
+      setPasswordError(e.message || "Failed to update password");
+    }
   };
 
   return (
@@ -217,9 +262,20 @@ export default function ProfileScreen() {
 
         <div className="flex flex-col items-center gap-2 vv-rise-in">
           <div className="relative">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-(--vv-accent) text-xl font-semibold text-white shadow-[0_12px_24px_rgba(35,70,60,0.28)]">
-              {profileInitials || "VV"}
-            </div>
+            {avatarUrl ? (
+              <img
+                src={`${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001'}${avatarUrl}`}
+                alt="Avatar"
+                className="h-20 w-20 rounded-full object-cover shadow-[0_12px_24px_rgba(35,70,60,0.28)] ring-2 ring-white"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-(--vv-accent) text-xl font-semibold text-white shadow-[0_12px_24px_rgba(35,70,60,0.28)]">
+                {profileInitials || "VV"}
+              </div>
+            )}
             <button
               type="button"
               onClick={openAvatarModal}

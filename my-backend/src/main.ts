@@ -53,6 +53,11 @@ async function bootstrap() {
     prefix: '/audios',
   });
 
+  // Serve avatar files from /public/avatars as /avatars/*
+  app.useStaticAssets(join(process.cwd(), 'public', 'avatars'), {
+    prefix: '/avatars',
+  });
+
   // Cấu hình Swagger
   const config = new DocumentBuilder()
     .setTitle('VietVibe API')
