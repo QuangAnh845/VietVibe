@@ -28,6 +28,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   revokeAllDevices: () => Promise<void>;
   refreshAccessToken: () => Promise<void>;
+  updateUser: (userData: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -107,6 +108,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setTokens(response.access_token, response.refresh_token, currentUser);
   }, [getRefreshToken, getUser, setTokens]);
 
+  const updateUser = useCallback(
+    (userData: Partial<User>) => {
+      setUser((prev) => {
+        if (!prev) return null;
+        const updatedUser = { ...prev, ...userData };
+        const currentAccessToken = getAccessToken();
+        const currentRefreshToken = getRefreshToken();
+        if (currentAccessToken && currentRefreshToken) {
+          setTokens(currentAccessToken, currentRefreshToken, updatedUser);
+        }
+        return updatedUser;
+      });
+    },
+    [getAccessToken, getRefreshToken, setTokens],
+  );
+
   const value: AuthContextType = {
     user,
     isLoading,
@@ -116,6 +133,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     logout,
     revokeAllDevices,
     refreshAccessToken,
+    updateUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -190,7 +190,7 @@ export class ListeningService {
     }
 
     await ListeningLesson.findByIdAndUpdate(lessonId, updatePayload, {
-      new: true,
+      returnDocument: 'after',
     });
 
     if (updateDto.transcriptLines) {
