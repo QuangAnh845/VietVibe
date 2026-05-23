@@ -9,6 +9,7 @@ import {
   Put,
   Query,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -22,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { AudioProcessingQueryDto } from './dto/audio-processing-query.dto';
 import { CreateListeningDto } from './dto/create-listening.dto';
-import { ListeningSessionQueryDto } from './dto/listening-session-query.dto';
+
 import { StartListeningSessionDto } from './dto/start-listening-session.dto';
 import { UpdateListeningDto } from './dto/update-listening.dto';
 import { UpdateListeningSessionDto } from './dto/update-listening-session.dto';
@@ -82,28 +83,34 @@ export class ListeningController {
   }
 
   @Post('sessions/:sessionId/complete')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
   @ApiOperation({
     summary: 'Complete a listening session and persist listening progress',
   })
   @ApiParam({ name: 'sessionId', description: 'Listening session id' })
   @ApiOkResponse({ description: 'Completed listening session state' })
   @ApiNotFoundResponse({ description: 'Listening session not found' })
-  completeListeningSession(@Param('sessionId') sessionId: string) {
-    return this.listeningService.completeListeningSession(sessionId);
+  completeListeningSession(@Param('sessionId') sessionId: string, @Request() req: any) {
+    return this.listeningService.completeListeningSession(sessionId, req.user.userId);
   }
 
   @Get('sessions/:sessionId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
   @ApiOperation({
     summary: 'Get a listening session with audio processing state',
   })
   @ApiParam({ name: 'sessionId', description: 'Listening session id' })
   @ApiOkResponse({ description: 'Listening session state' })
   @ApiNotFoundResponse({ description: 'Listening session not found' })
-  getListeningSessionById(@Param('sessionId') sessionId: string) {
-    return this.listeningService.getListeningSessionById(sessionId);
+  getListeningSessionById(@Param('sessionId') sessionId: string, @Request() req: any) {
+    return this.listeningService.getListeningSessionById(sessionId, req.user.userId);
   }
 
   @Patch('sessions/:sessionId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
   @ApiOperation({ summary: 'Update listening session position/settings' })
   @ApiParam({ name: 'sessionId', description: 'Listening session id' })
   @ApiOkResponse({ description: 'Updated listening session state' })
@@ -111,8 +118,9 @@ export class ListeningController {
   updateListeningSession(
     @Param('sessionId') sessionId: string,
     @Body() updateDto: UpdateListeningSessionDto,
+    @Request() req: any,
   ) {
-    return this.listeningService.updateListeningSession(sessionId, updateDto);
+    return this.listeningService.updateListeningSession(sessionId, req.user.userId, updateDto);
   }
 
   @Get(':id/audio-processing')
@@ -134,6 +142,8 @@ export class ListeningController {
   }
 
   @Get(':id/sessions/latest')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
   @ApiOperation({
     summary: 'Get latest listening session for a lesson and learner',
   })
@@ -142,12 +152,14 @@ export class ListeningController {
   @ApiNotFoundResponse({ description: 'Listening session not found' })
   getLatestListeningSession(
     @Param('id') id: string,
-    @Query() query: ListeningSessionQueryDto,
+    @Request() req: any,
   ) {
-    return this.listeningService.getLatestListeningSession(id, query.userId);
+    return this.listeningService.getLatestListeningSession(id, req.user.userId);
   }
 
   @Post(':id/sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
   @ApiOperation({
     summary: 'Start a listening session for a lesson',
     description:
@@ -159,8 +171,9 @@ export class ListeningController {
   startListeningSession(
     @Param('id') id: string,
     @Body() startDto: StartListeningSessionDto,
+    @Request() req: any,
   ) {
-    return this.listeningService.startListeningSession(id, startDto);
+    return this.listeningService.startListeningSession(id, req.user.userId, startDto);
   }
 
   @Get(':id')
