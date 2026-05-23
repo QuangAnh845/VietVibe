@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { apiCall } from "@/lib/api";
 import AdminSidebar from "./admin-sidebar";
 
 type Status = "published" | "edited" | "draft";
@@ -214,6 +215,9 @@ export default function AdminContentScreen() {
     string | null
   >(null);
   const [locationToast, setLocationToast] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(
+    "saved",
+  );
   const [vocabModal, setVocabModal] = useState<"add" | "edit" | null>(null);
   const [vocabForm, setVocabForm] = useState({
     index: "",
@@ -258,6 +262,62 @@ export default function AdminContentScreen() {
       ),
     );
   }, [ambientQuery]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadContent = async () => {
+      try {
+        const places = await apiCall("/listening/places");
+        const nextLocations = await Promise.all(
+          places.map(async (place: any) => {
+            const situations = await apiCall(
+              `/listening/places/${place.id}/situations`,
+            );
+
+            return {
+              id: place.id,
+              label: place.nameVi || place.nameJa || "Tên mới",
+              icon: "cart" as IconName,
+              status: "draft" as Status,
+              units: situations.map((situation: any) => ({
+                id: situation.id,
+                title: situation.titleVi || situation.titleJa || "Tình huống mới",
+                status: "draft" as Status,
+                vocabCount: 0,
+                listeningCount: 0,
+                duration: "0:00",
+              })),
+            };
+          }),
+        );
+
+        if (isMounted) {
+          setLocationsState(
+            nextLocations.length ? nextLocations : initialLocations,
+          );
+          setSaveStatus("saved");
+        }
+      } catch (error) {
+        console.error("Failed to load admin content", error);
+        if (isMounted) {
+          setSaveStatus("error");
+        }
+      }
+    };
+
+    loadContent();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const saveStatusLabel = {
+    saved: "✓ Đã lưu tự động",
+    saving: "⏳ Đang lưu tự động...",
+    error: "⚠️ Lưu chưa hoàn tất",
+  }[saveStatus];
 
   const startEditRow = (row: (typeof listeningRows)[number]) => {
     setEditingRow(row.index);
@@ -520,7 +580,7 @@ export default function AdminContentScreen() {
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="text-[11px] text-[#7b8b83]">
-                            ✓ Đã lưu tự động
+                            {saveStatusLabel}
                           </span>
                           {activeUnit?.status === "published" ? (
                             <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
@@ -1564,34 +1624,90 @@ export default function AdminContentScreen() {
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
+                  const nextLabel = locationForm.label || "Tên mới";
+                  const nextIcon = (locationForm.icon as IconName) || "cart";
+
                   if (isAddLocationOpen) {
+                    const tempId = `loc-${Date.now()}`;
                     setLocationsState((prev) => [
                       ...prev,
                       {
-                        id: locationForm.id || `loc-${Date.now()}`,
-                        label: locationForm.label || "Tên mới",
-                        icon: (locationForm.icon as any) || "cart",
+                        id: tempId,
+                        label: nextLabel,
+                        icon: nextIcon,
                         status: "draft",
                         units: [],
                       },
                     ]);
+                    setSaveStatus("saving");
+
+                    try {
+                      const created = await apiCall("/listening/admin/places", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          nameVi: nextLabel,
+                          nameJa: nextLabel,
+                          description: null,
+                          avatarUrl: null,
+                        }),
+                      });
+
+                      setLocationsState((prev) =>
+                        prev.map((l) =>
+                          l.id === tempId
+                            ? {
+                                ...l,
+                                id: created.id,
+                                label: created.nameVi || created.nameJa || nextLabel,
+                              }
+                            : l,
+                        ),
+                      );
+                      setSaveStatus("saved");
+                      setLocationToast("Đã thêm địa điểm.");
+                    } catch (error) {
+                      console.error("Failed to create place", error);
+                      setLocationsState((prev) => prev.filter((l) => l.id !== tempId));
+                      setSaveStatus("error");
+                      setLocationToast("Không thể thêm địa điểm.");
+                    }
+
                     setIsAddLocationOpen(false);
-                    setLocationToast("Đã thêm địa điểm.");
                   } else {
-                    setLocationsState((prev) =>
-                      prev.map((l) =>
-                        l.id === locationForm.id
-                          ? {
-                              ...l,
-                              label: locationForm.label,
-                              icon: locationForm.icon as IconName,
-                            }
-                          : l,
-                      ),
-                    );
+                    setSaveStatus("saving");
+
+                    try {
+                      await apiCall(`/listening/admin/places/${locationForm.id}`, {
+                        method: "PUT",
+                        body: JSON.stringify({
+                          nameVi: nextLabel,
+                          nameJa: nextLabel,
+                          description: null,
+                          avatarUrl: null,
+                        }),
+                      });
+
+                      setLocationsState((prev) =>
+                        prev.map((l) =>
+                          l.id === locationForm.id
+                            ? {
+                                ...l,
+                                label: nextLabel,
+                                icon: nextIcon,
+                              }
+                            : l,
+                        ),
+                      );
+                      setSaveStatus("saved");
+                      setLocationToast("Đã cập nhật địa điểm.");
+                    } catch (error) {
+                      console.error("Failed to update place", error);
+                      setSaveStatus("error");
+                      setLocationToast("Không thể cập nhật địa điểm.");
+                    }
+
                     setIsEditLocationOpen(false);
-                    setLocationToast("Đã cập nhật địa điểm.");
                   }
                   window.setTimeout(() => setLocationToast(null), 2400);
                 }}
@@ -1673,8 +1789,16 @@ export default function AdminContentScreen() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (isAddSituationOpen && currentLocationId) {
+                onClick={async () => {
+                  if (!currentLocationId) {
+                    setCurrentLocationId(null);
+                    return;
+                  }
+
+                  const nextTitle = situationForm.title || "Tình huống mới";
+
+                  if (isAddSituationOpen) {
+                    const tempId = situationForm.id || `unit-${Date.now()}`;
                     setLocationsState((prev) =>
                       prev.map((l) =>
                         l.id === currentLocationId
@@ -1683,8 +1807,8 @@ export default function AdminContentScreen() {
                               units: [
                                 ...l.units,
                                 {
-                                  id: situationForm.id,
-                                  title: situationForm.title,
+                                  id: tempId,
+                                  title: nextTitle,
                                   status: "draft",
                                   vocabCount: 0,
                                   listeningCount: 0,
@@ -1695,26 +1819,95 @@ export default function AdminContentScreen() {
                           : l,
                       ),
                     );
+                    setSaveStatus("saving");
+
+                    try {
+                      const created = await apiCall("/listening/admin/situations", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          placeId: currentLocationId,
+                          titleVi: nextTitle,
+                          titleJa: nextTitle,
+                          description: null,
+                        }),
+                      });
+
+                      setLocationsState((prev) =>
+                        prev.map((l) =>
+                          l.id === currentLocationId
+                            ? {
+                                ...l,
+                                units: l.units.map((u) =>
+                                  u.id === tempId
+                                    ? {
+                                        ...u,
+                                        id: created.id,
+                                        title: created.titleVi || created.titleJa || nextTitle,
+                                      }
+                                    : u,
+                                ),
+                              }
+                            : l,
+                        ),
+                      );
+                      setSaveStatus("saved");
+                      setLocationToast("Đã thêm tình huống.");
+                    } catch (error) {
+                      console.error("Failed to create situation", error);
+                      setLocationsState((prev) =>
+                        prev.map((l) =>
+                          l.id === currentLocationId
+                            ? {
+                                ...l,
+                                units: l.units.filter((u) => u.id !== tempId),
+                              }
+                            : l,
+                        ),
+                      );
+                      setSaveStatus("error");
+                      setLocationToast("Không thể thêm tình huống.");
+                    }
+
                     setIsAddSituationOpen(false);
-                    setLocationToast("Đã thêm tình huống.");
-                  } else if (isEditSituationOpen && currentLocationId) {
-                    setLocationsState((prev) =>
-                      prev.map((l) =>
-                        l.id === currentLocationId
-                          ? {
-                              ...l,
-                              units: l.units.map((u) =>
-                                u.id === situationForm.id
-                                  ? { ...u, title: situationForm.title }
-                                  : u,
-                              ),
-                            }
-                          : l,
-                      ),
-                    );
+                  } else if (isEditSituationOpen) {
+                    setSaveStatus("saving");
+
+                    try {
+                      await apiCall(`/listening/admin/situations/${situationForm.id}`, {
+                        method: "PUT",
+                        body: JSON.stringify({
+                          placeId: currentLocationId,
+                          titleVi: nextTitle,
+                          titleJa: nextTitle,
+                          description: null,
+                        }),
+                      });
+
+                      setLocationsState((prev) =>
+                        prev.map((l) =>
+                          l.id === currentLocationId
+                            ? {
+                                ...l,
+                                units: l.units.map((u) =>
+                                  u.id === situationForm.id
+                                    ? { ...u, title: nextTitle }
+                                    : u,
+                                ),
+                              }
+                            : l,
+                        ),
+                      );
+                      setSaveStatus("saved");
+                      setLocationToast("Đã cập nhật tình huống.");
+                    } catch (error) {
+                      console.error("Failed to update situation", error);
+                      setSaveStatus("error");
+                      setLocationToast("Không thể cập nhật tình huống.");
+                    }
+
                     setIsEditSituationOpen(false);
-                    setLocationToast("Đã cập nhật tình huống.");
                   }
+
                   window.setTimeout(() => setLocationToast(null), 2400);
                   setCurrentLocationId(null);
                 }}
@@ -1769,13 +1962,25 @@ export default function AdminContentScreen() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     const id = deleteLocationIdState;
-                    setLocationsState((prev) =>
-                      prev.filter((l) => l.id !== id),
-                    );
+                    setSaveStatus("saving");
+
+                    try {
+                      await apiCall(`/listening/admin/places/${id}`, {
+                        method: "DELETE",
+                      });
+
+                      setLocationsState((prev) => prev.filter((l) => l.id !== id));
+                      setSaveStatus("saved");
+                      setLocationToast("Đã xóa địa điểm.");
+                    } catch (error) {
+                      console.error("Failed to delete place", error);
+                      setSaveStatus("error");
+                      setLocationToast("Không thể xóa địa điểm.");
+                    }
+
                     setDeleteLocationIdState(null);
-                    setLocationToast("Đã xóa địa điểm.");
                     window.setTimeout(() => setLocationToast(null), 2400);
                   }}
                   className="inline-flex items-center gap-2 rounded-full bg-[#9F403D] px-4 py-2 text-xs font-semibold text-white"
