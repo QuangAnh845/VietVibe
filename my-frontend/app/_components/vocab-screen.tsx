@@ -21,6 +21,7 @@ const DEFAULT_BACKEND =
 
 const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
+const PROGRESS_EVENT = "vv-progress-updated";
 
 async function fetchVocabCards(learningUnitId?: string): Promise<VocabCard[]> {
   try {
@@ -89,6 +90,10 @@ export default function VocabScreen() {
   const learningUnitId = searchParams.get("learningUnitId");
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [flippedCardIds, setFlippedCardIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [hasMarkedCompletion, setHasMarkedCompletion] = useState(false);
 
   const [cards, setCards] = useState<VocabCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,40 +104,50 @@ export default function VocabScreen() {
     ({ id: "", term: "", meaning: "", example: "" } as VocabCard);
 
   const isLastCard = cards.length > 0 && index >= cards.length - 1;
+  const hasFlippedAll = cards.length > 0 && flippedCardIds.size >= cards.length;
+
+  const markVocabCompletion = () => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+      if (!lastSelectionRaw) return;
+
+      const lastSelection = JSON.parse(lastSelectionRaw) as {
+        sectionId: string;
+        taskId: string;
+        mode: "vocab" | "listen";
+      };
+
+      if (lastSelection.mode !== "vocab") return;
+
+      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      const progress = stored ? JSON.parse(stored) : {};
+
+      if (!progress[lastSelection.sectionId]) {
+        progress[lastSelection.sectionId] = {};
+      }
+      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
+        progress[lastSelection.sectionId][lastSelection.taskId] = {};
+      }
+
+      if (progress[lastSelection.sectionId][lastSelection.taskId].vocab) {
+        setHasMarkedCompletion(true);
+        return;
+      }
+
+      progress[lastSelection.sectionId][lastSelection.taskId].vocab = true;
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+      window.dispatchEvent(new Event(PROGRESS_EVENT));
+      setHasMarkedCompletion(true);
+    } catch (error) {
+      console.error("Failed to store vocab completion", error);
+    }
+  };
 
   const markCompletionAndExit = () => {
-    if (typeof window !== "undefined") {
-      try {
-        const lastSelectionRaw = localStorage.getItem(
-          LAST_SELECTION_STORAGE_KEY,
-        );
-        if (lastSelectionRaw) {
-          const lastSelection = JSON.parse(lastSelectionRaw) as {
-            sectionId: string;
-            taskId: string;
-            mode: "vocab" | "listen";
-          };
-
-          if (lastSelection.mode === "vocab") {
-            const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-            const progress = stored ? JSON.parse(stored) : {};
-            if (!progress[lastSelection.sectionId]) {
-              progress[lastSelection.sectionId] = {};
-            }
-            if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
-              progress[lastSelection.sectionId][lastSelection.taskId] = {};
-            }
-            progress[lastSelection.sectionId][lastSelection.taskId].vocab =
-              true;
-            localStorage.setItem(
-              PROGRESS_STORAGE_KEY,
-              JSON.stringify(progress),
-            );
-          }
-        }
-      } catch (error) {
-        console.error("Failed to store vocab completion", error);
-      }
+    if (hasFlippedAll) {
+      markVocabCompletion();
     }
 
     router.push("/");
@@ -162,6 +177,9 @@ export default function VocabScreen() {
         if (!mounted) return;
         setCards(result);
         setIndex(0);
+        setFlipped(false);
+        setFlippedCardIds(new Set());
+        setHasMarkedCompletion(false);
         setLoading(false);
       })
       .catch((err: any) => {
@@ -177,6 +195,29 @@ export default function VocabScreen() {
       mounted = false;
     };
   }, [learningUnitId]);
+
+  useEffect(() => {
+    if (!hasFlippedAll || hasMarkedCompletion) return;
+    markVocabCompletion();
+  }, [hasFlippedAll, hasMarkedCompletion]);
+
+  const handleCardFlip = () => {
+    if (!card?.id) return;
+
+    setFlipped((prev) => {
+      const nextFlipped = !prev;
+
+      if (nextFlipped) {
+        setFlippedCardIds((prevIds) => {
+          const nextIds = new Set(prevIds);
+          nextIds.add(card.id);
+          return nextIds;
+        });
+      }
+
+      return nextFlipped;
+    });
+  };
 
   return (
     <div className="min-h-screen w-full bg-[#f6f7f3]">
@@ -276,7 +317,7 @@ export default function VocabScreen() {
               <div
                 className=" vv-flip"
                 data-flipped={flipped}
-                onClick={() => setFlipped((prev) => !prev)}
+                onClick={handleCardFlip}
               >
                 <div className="relative vv-flip-inner">
                   <div className="vv-flip-side w-full ">
