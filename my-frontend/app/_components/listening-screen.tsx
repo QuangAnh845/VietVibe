@@ -36,14 +36,6 @@ const ambientOptions: Array<{ id: AmbientSound; label: string }> = [
   { id: "off", label: "オフ" },
 ];
 
-const AMBIENT_AUDIO_SOURCES: Record<AmbientSound, string> = {
-  cafe: "/audio/ambient/cafe.mp3",
-  road: "/audio/ambient/road.mp3",
-  market: "/audio/ambient/market.mp3",
-  office: "/audio/ambient/office.mp3",
-  off: "",
-};
-
 const SETTINGS_STORAGE_KEY = "vv-listening-settings";
 const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
@@ -63,7 +55,6 @@ export default function ListeningScreen() {
   const searchParams = useSearchParams();
   const learningUnitId = searchParams.get("learningUnitId");
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const ambientAudioRef = useRef<HTMLAudioElement | null>(null);
   // Persisted settings (applied immediately)
   const [speed, setSpeed] = useState<(typeof speeds)[number]>("1.0x");
   const [playMode, setPlayMode] = useState<PlayMode>("study");
@@ -90,14 +81,6 @@ export default function ListeningScreen() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
-  const effectiveAmbientSound = isSettingsOpen
-    ? tempAmbientSound
-    : ambientSound;
-  const effectiveAmbientVolume = isSettingsOpen
-    ? tempAmbientVolume
-    : ambientVolume;
-  const ambientAudioSrc = AMBIENT_AUDIO_SOURCES[effectiveAmbientSound];
-
   // Load settings from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -123,35 +106,6 @@ export default function ListeningScreen() {
 
     audio.playbackRate = speed === "0.75x" ? 0.75 : 1;
   }, [speed, lesson?.audioUrl]);
-
-  useEffect(() => {
-    const ambientAudio = ambientAudioRef.current;
-    if (!ambientAudio) return;
-
-    const volume = Math.min(1, Math.max(0, effectiveAmbientVolume / 100));
-    ambientAudio.volume = volume;
-  }, [effectiveAmbientVolume, ambientAudioSrc]);
-
-  useEffect(() => {
-    const ambientAudio = ambientAudioRef.current;
-    if (!ambientAudio) return;
-
-    if (!ambientAudioSrc) {
-      ambientAudio.pause();
-      ambientAudio.currentTime = 0;
-      return;
-    }
-
-    if (isPlaying) {
-      ambientAudio.loop = true;
-      void ambientAudio.play().catch((error) => {
-        console.error("Failed to play ambient audio:", error);
-      });
-      return;
-    }
-
-    ambientAudio.pause();
-  }, [ambientAudioSrc, isPlaying]);
 
   useEffect(() => {
     let mounted = true;
@@ -356,24 +310,6 @@ export default function ListeningScreen() {
   // into the `src` attribute (browsers warn and may re-request the page).
   const resolvedAudioSrc = resolveAudioUrl(lesson?.audioUrl ?? "");
 
-  const playAmbientAudio = () => {
-    const ambientAudio = ambientAudioRef.current;
-    if (!ambientAudio || !ambientAudioSrc) return;
-
-    const volume = Math.min(1, Math.max(0, effectiveAmbientVolume / 100));
-    ambientAudio.volume = volume;
-    ambientAudio.loop = true;
-    void ambientAudio.play().catch((error) => {
-      console.error("Failed to play ambient audio:", error);
-    });
-  };
-
-  const pauseAmbientAudio = () => {
-    const ambientAudio = ambientAudioRef.current;
-    if (!ambientAudio) return;
-    ambientAudio.pause();
-  };
-
   const getLineIndexForTime = (time: number) => {
     if (lines.length === 0) return -1;
 
@@ -425,10 +361,7 @@ export default function ListeningScreen() {
       }
       void audio
         .play()
-        .then(() => {
-          setIsPlaying(true);
-          playAmbientAudio();
-        })
+        .then(() => setIsPlaying(true))
         .catch((error) => {
           console.error("Failed to play audio:", error);
           setIsPlaying(false);
@@ -438,7 +371,6 @@ export default function ListeningScreen() {
 
     audio.pause();
     setIsPlaying(false);
-    pauseAmbientAudio();
   };
 
   const handleAudioTimeUpdate = () => {
@@ -452,7 +384,6 @@ export default function ListeningScreen() {
         audio.currentTime = currentLine.endTime;
         setCurrentTime(currentLine.endTime);
         setIsPlaying(false);
-        pauseAmbientAudio();
         return;
       }
 
@@ -470,7 +401,6 @@ export default function ListeningScreen() {
 
   const handleAudioEnded = () => {
     setIsPlaying(false);
-    pauseAmbientAudio();
     markListeningCompletion();
     if (lines.length > 0) {
       setCurrentIndex(lines.length - 1);
@@ -678,14 +608,6 @@ export default function ListeningScreen() {
             className="hidden"
           />
         ) : null}
-
-        <audio
-          ref={ambientAudioRef}
-          src={ambientAudioSrc || undefined}
-          preload="auto"
-          loop
-          className="hidden"
-        />
 
         <div className="vv-rise-in">
           <p className="text-xs font-semibold text-(--vv-muted)">
