@@ -379,6 +379,32 @@ export default function ListeningScreen() {
   const lessonDuration = lesson?.durationSeconds ?? 0;
   const isLastLine = lines.length > 0 && currentIndex >= lines.length - 1;
 
+  const vocabHref = learningUnitId
+    ? `/vocab?learningUnitId=${encodeURIComponent(learningUnitId)}`
+    : "/vocab";
+
+  const updateLastSelectionMode = (mode: "vocab" | "listen") => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as {
+        sectionId: string;
+        taskId: string;
+        mode: "vocab" | "listen";
+      };
+
+      localStorage.setItem(
+        LAST_SELECTION_STORAGE_KEY,
+        JSON.stringify({ ...parsed, mode }),
+      );
+    } catch {
+      // Ignore parsing errors
+    }
+  };
+
   const resolveAudioUrl = (audioUrl: string) => {
     if (!audioUrl) return "";
     if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
@@ -758,7 +784,8 @@ export default function ListeningScreen() {
 
         <div className="flex items-center gap-6 border-b border-(--vv-border) text-sm font-semibold vv-rise-in vv-delay-1">
           <Link
-            href="/vocab"
+            href={vocabHref}
+            onClick={() => updateLastSelectionMode("vocab")}
             className="pb-3 text-(--vv-muted) transition hover:text-(--vv-accent-strong)"
           >
             語彙
