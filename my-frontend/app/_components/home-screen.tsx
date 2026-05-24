@@ -60,6 +60,7 @@ type TaskProgress = Record<
 
 const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
+const PROGRESS_EVENT = "vv-progress-updated";
 
 // Map places to icon names
 const placeIconMap: Record<string, IconName> = {
@@ -251,8 +252,8 @@ export default function HomeScreen() {
                 return learningUnits.map((unit) => ({
                   id: unit.id,
                   title: unit.titleJa,
-                  vocab: true,
-                  listen: true,
+                  vocab: false,
+                  listen: false,
                   learningUnitId: unit.id,
                 }));
               }),
@@ -285,8 +286,34 @@ export default function HomeScreen() {
         );
 
         if (nextSections.length > 0) {
-          setSections(nextSections);
-          setOpenIds([nextSections[0]?.id ?? ""]);
+          let resolvedSections = nextSections;
+
+          if (typeof window !== "undefined") {
+            try {
+              const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+              const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
+
+              resolvedSections = nextSections.map((section) => {
+                const sectionProgress = progress[section.id] ?? {};
+                return {
+                  ...section,
+                  tasks: section.tasks.map((task) => {
+                    const taskProgress = sectionProgress[task.id] ?? {};
+                    return {
+                      ...task,
+                      vocab: taskProgress.vocab ?? task.vocab,
+                      listen: taskProgress.listen ?? task.listen,
+                    };
+                  }),
+                };
+              });
+            } catch (error) {
+              console.error("Failed to read progress", error);
+            }
+          }
+
+          setSections(resolvedSections);
+          setOpenIds([resolvedSections[0]?.id ?? ""]);
         }
       } catch (error) {
         console.error("Failed to load data from API:", error);
@@ -389,10 +416,12 @@ export default function HomeScreen() {
     };
 
     window.addEventListener("focus", syncProgress);
+    window.addEventListener(PROGRESS_EVENT, syncProgress);
     document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
       window.removeEventListener("focus", syncProgress);
+      window.removeEventListener(PROGRESS_EVENT, syncProgress);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
@@ -447,7 +476,15 @@ export default function HomeScreen() {
       );
     }
 
-    router.push(field === "vocab" ? "/vocab" : "/listening");
+    const section = sections.find((item) => item.id === sectionId);
+    const task = section?.tasks.find((item) => item.id === taskId);
+    const query = task?.learningUnitId
+      ? `?learningUnitId=${encodeURIComponent(task.learningUnitId)}`
+      : "";
+
+    router.push(
+      `${field === "vocab" ? "/vocab" : "/listening"}${query}`,
+    );
   };
 
   return (

@@ -41,6 +41,7 @@ const defaultAmbientOptions: EnvironmentSoundOption[] = [
 const SETTINGS_STORAGE_KEY = "vv-listening-settings";
 const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
+const PROGRESS_EVENT = "vv-progress-updated";
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
@@ -61,6 +62,9 @@ export default function ListeningScreen() {
   const [speed, setSpeed] = useState<(typeof speeds)[number]>("1.0x");
   const [playMode, setPlayMode] = useState<PlayMode>("study");
   const [showJapanese, setShowJapanese] = useState(true);
+
+  // Temporary settings (only used in modal, applied on save)
+  const [tempPlayMode, setTempPlayMode] = useState<PlayMode>("study");
 
   // Temporary settings (only used in modal, applied on save)
   const [tempAmbientSound, setTempAmbientSound] =
@@ -157,7 +161,7 @@ export default function ListeningScreen() {
     if (!audio) return;
 
     audio.playbackRate = speed === "0.75x" ? 0.75 : 1;
-  }, [speed]);
+  }, [speed, lesson?.audioUrl]);
 
   useEffect(() => {
     let mounted = true;
@@ -343,15 +347,17 @@ export default function ListeningScreen() {
 
   // Handle settings modal save
   const handleSettingsSave = () => {
+    setPlayMode(tempPlayMode);
     setAmbientSound(tempAmbientSound);
     setAmbientVolume(tempAmbientVolume);
-    persistSettings(speed, playMode, tempAmbientSound, tempAmbientVolume);
+    persistSettings(speed, tempPlayMode, tempAmbientSound, tempAmbientVolume);
     setIsSettingsOpen(false);
   };
 
   // Handle settings modal cancel
   const handleSettingsCancel = () => {
     // Reset temporary settings to current values
+    setTempPlayMode(playMode);
     setTempAmbientSound(ambientSound);
     setTempAmbientVolume(ambientVolume);
     setIsSettingsOpen(false);
@@ -359,8 +365,14 @@ export default function ListeningScreen() {
 
   // Update playMode and persist
   const handlePlayModeChange = (newMode: PlayMode) => {
-    setPlayMode(newMode);
-    persistSettings(speed, newMode, ambientSound, ambientVolume);
+    setTempPlayMode(newMode);
+  };
+
+  const openSettings = () => {
+    setTempPlayMode(playMode);
+    setTempAmbientSound(ambientSound);
+    setTempAmbientVolume(ambientVolume);
+    setIsSettingsOpen(true);
   };
 
   const currentLine = lines[currentIndex];
@@ -442,6 +454,13 @@ export default function ListeningScreen() {
     if (!audio || !lesson?.audioUrl) return;
 
     if (audio.paused) {
+      if (playMode === "study" && currentLine) {
+        const needsReset = audio.currentTime >= currentLine.endTime - 0.05;
+        if (needsReset) {
+          audio.currentTime = currentLine.startTime;
+          setCurrentTime(currentLine.startTime);
+        }
+      }
       void audio
         .play()
         .then(() => setIsPlaying(true))
@@ -462,6 +481,19 @@ export default function ListeningScreen() {
     if (!audio) return;
 
     const time = audio.currentTime;
+    if (playMode === "study" && currentLine) {
+      if (time >= currentLine.endTime) {
+        audio.pause();
+        audio.currentTime = currentLine.endTime;
+        setCurrentTime(currentLine.endTime);
+        setIsPlaying(false);
+        return;
+      }
+
+      setCurrentTime(time);
+      return;
+    }
+
     setCurrentTime(time);
 
     const activeLineIndex = getLineIndexForTime(time);
@@ -472,6 +504,7 @@ export default function ListeningScreen() {
 
   const handleAudioEnded = () => {
     setIsPlaying(false);
+    markListeningCompletion();
     if (lines.length > 0) {
       setCurrentIndex(lines.length - 1);
       setCurrentTime(lessonDuration);
@@ -499,41 +532,46 @@ export default function ListeningScreen() {
     }
   };
 
-  const markListeningCompletionAndExit = () => {
-    if (typeof window !== "undefined") {
-      try {
-        const lastSelectionRaw = localStorage.getItem(
-          LAST_SELECTION_STORAGE_KEY,
-        );
-        if (lastSelectionRaw) {
-          const lastSelection = JSON.parse(lastSelectionRaw) as {
-            sectionId: string;
-            taskId: string;
-            mode: "vocab" | "listen";
-          };
+  const markListeningCompletion = () => {
+    if (typeof window === "undefined") return;
 
-          if (lastSelection.mode === "listen") {
-            const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-            const progress = stored ? JSON.parse(stored) : {};
-            if (!progress[lastSelection.sectionId]) {
-              progress[lastSelection.sectionId] = {};
-            }
-            if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
-              progress[lastSelection.sectionId][lastSelection.taskId] = {};
-            }
-            progress[lastSelection.sectionId][lastSelection.taskId].listen =
-              true;
-            localStorage.setItem(
-              PROGRESS_STORAGE_KEY,
-              JSON.stringify(progress),
-            );
-          }
-        }
-      } catch (error) {
-        console.error("Failed to store listening completion", error);
+    try {
+      const lastSelectionRaw = localStorage.getItem(
+        LAST_SELECTION_STORAGE_KEY,
+      );
+      if (!lastSelectionRaw) return;
+
+      const lastSelection = JSON.parse(lastSelectionRaw) as {
+        sectionId: string;
+        taskId: string;
+        mode: "vocab" | "listen";
+      };
+
+      if (lastSelection.mode !== "listen") return;
+
+      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      const progress = stored ? JSON.parse(stored) : {};
+      if (!progress[lastSelection.sectionId]) {
+        progress[lastSelection.sectionId] = {};
       }
-    }
+      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
+        progress[lastSelection.sectionId][lastSelection.taskId] = {};
+      }
 
+      if (progress[lastSelection.sectionId][lastSelection.taskId].listen) {
+        return;
+      }
+
+      progress[lastSelection.sectionId][lastSelection.taskId].listen = true;
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+      window.dispatchEvent(new Event(PROGRESS_EVENT));
+    } catch (error) {
+      console.error("Failed to store listening completion", error);
+    }
+  };
+
+  const markListeningCompletionAndExit = () => {
+    markListeningCompletion();
     syncProgressToAPI(lessonDuration);
     router.push("/");
   };
@@ -559,7 +597,7 @@ export default function ListeningScreen() {
       {isSettingsOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setIsSettingsOpen(false)}
+          onClick={handleSettingsCancel}
         >
           <div
             role="dialog"
@@ -576,7 +614,7 @@ export default function ListeningScreen() {
               <button
                 type="button"
                 className="text-lg font-semibold text-(--vv-muted)"
-                onClick={() => setIsSettingsOpen(false)}
+                onClick={handleSettingsCancel}
                 aria-label="Close"
               >
                 ×
@@ -593,7 +631,7 @@ export default function ListeningScreen() {
                   type="button"
                   onClick={() => handlePlayModeChange("study")}
                   className={`flex-1 rounded-3xl px-5 py-3 text-sm font-semibold transition ${
-                    playMode === "study"
+                    tempPlayMode === "study"
                       ? "bg-(--vv-accent-strong) text-white"
                       : "bg-(--vv-border) text-(--vv-muted)"
                   }`}
@@ -604,7 +642,7 @@ export default function ListeningScreen() {
                   type="button"
                   onClick={() => handlePlayModeChange("continuous")}
                   className={`flex-1 rounded-3xl px-5 py-3 text-sm font-semibold transition ${
-                    playMode === "continuous"
+                    tempPlayMode === "continuous"
                       ? "bg-(--vv-accent-strong) text-white"
                       : "bg-(--vv-border) text-(--vv-muted)"
                   }`}
@@ -769,7 +807,7 @@ export default function ListeningScreen() {
           {/* Settings Button */}
           <button
             type="button"
-            onClick={() => setIsSettingsOpen(true)}
+            onClick={openSettings}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
             aria-label="Settings"
             title="再生設定を開く"
