@@ -12,7 +12,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdatePasswordDto } from './dto/update-password.dto.js';
 
 const models = require(path.resolve(__dirname, '../../src/models'));
-const { LearningUnit, Situation, VocabularyCard, UserProgress } = models;
+const { LearningUnit, VocabularyCard, UserProgress } = models;
 
 type UserProgressRecord = {
   learning_unit_id: unknown;
@@ -135,22 +135,15 @@ export class UsersService {
       ]),
     );
 
-    const situationIds = new Set<string>();
     const learningUnitProgress: Record<
       string,
       { vocab: boolean; listen: boolean }
     > = {};
-    const situationCompletion = new Map<
-      string,
-      { totalUnits: number; completedUnits: number }
-    >();
+    let totalProgressItems = 0;
+    let completedProgressItems = 0;
 
     for (const unit of learningUnits) {
       const unitId = String(unit._id);
-      const situationId = String((unit as { situation_id?: unknown }).situation_id);
-      if (situationId && situationId !== 'undefined') {
-        situationIds.add(situationId);
-      }
 
       const progress = progressByUnitId.get(unitId);
       const vocabCompleted = Boolean(progress?.vocabulary_progress?.completed);
@@ -161,36 +154,22 @@ export class UsersService {
         listen: listenCompleted,
       };
 
-      if (!situationCompletion.has(situationId)) {
-        situationCompletion.set(situationId, { totalUnits: 0, completedUnits: 0 });
-      }
-
-      const situationStats = situationCompletion.get(situationId)!;
-      situationStats.totalUnits += 1;
-      if (vocabCompleted && listenCompleted) {
-        situationStats.completedUnits += 1;
-      }
-    }
-
-    const totalSituations = await Situation.countDocuments({}).exec();
-    let completedSituations = 0;
-    for (const stats of situationCompletion.values()) {
-      if (stats.totalUnits > 0 && stats.completedUnits >= stats.totalUnits) {
-        completedSituations += 1;
-      }
+      totalProgressItems += 2;
+      if (vocabCompleted) completedProgressItems += 1;
+      if (listenCompleted) completedProgressItems += 1;
     }
 
     const progressPercent =
-      totalSituations > 0
-        ? Math.round((completedSituations / totalSituations) * 100)
+      totalProgressItems > 0
+        ? Math.round((completedProgressItems / totalProgressItems) * 100)
         : 0;
 
     return {
       userId,
       totalLearningUnits: learningUnits.length,
-      completedLearningUnits: completedSituations,
-      totalSituations,
-      completedSituations,
+      completedLearningUnits: completedProgressItems,
+      totalProgressItems,
+      completedProgressItems,
       progressPercent,
       learningUnitProgress,
     };
@@ -226,7 +205,8 @@ export class UsersService {
     });
 
     if (field === 'vocab') {
-      const existingCompletedAt = existingProgress?.vocabulary_progress?.completed_at ?? null;
+      const existingCompletedAt =
+        existingProgress?.vocabulary_progress?.completed_at ?? null;
       await UserProgress.updateOne(
         {
           user_id: userObjectId,
@@ -236,14 +216,15 @@ export class UsersService {
           $set: {
             'vocabulary_progress.completed': completed,
             'vocabulary_progress.completed_at': completed
-              ? existingCompletedAt ?? new Date()
+              ? (existingCompletedAt ?? new Date())
               : null,
           },
         },
         { upsert: true },
       );
     } else {
-      const existingCompletedAt = existingProgress?.listening_progress?.completed_at ?? null;
+      const existingCompletedAt =
+        existingProgress?.listening_progress?.completed_at ?? null;
       await UserProgress.updateOne(
         {
           user_id: userObjectId,
@@ -253,7 +234,7 @@ export class UsersService {
           $set: {
             'listening_progress.completed': completed,
             'listening_progress.completed_at': completed
-              ? existingCompletedAt ?? new Date()
+              ? (existingCompletedAt ?? new Date())
               : null,
           },
         },

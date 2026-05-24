@@ -62,6 +62,10 @@ type OverallProgressResponse = {
   progressPercent: number;
   totalLearningUnits: number;
   completedLearningUnits: number;
+  totalProgressItems?: number;
+  completedProgressItems?: number;
+  totalSituations?: number;
+  activeSituations?: number;
   learningUnitProgress?: Record<
     string,
     {
@@ -71,9 +75,7 @@ type OverallProgressResponse = {
   >;
 };
 
-const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
-const PROGRESS_EVENT = "vv-progress-updated";
 
 // Map places to icon names
 const placeIconMap: Record<string, IconName> = {
@@ -103,6 +105,12 @@ export default function HomeScreen() {
   const [dbLearningUnitProgress, setDbLearningUnitProgress] = useState<
     Record<string, { vocab: boolean; listen: boolean }>
   >({});
+  const [totalProgressItems, setTotalProgressItems] = useState<number | null>(
+    null,
+  );
+  const [completedProgressItems, setCompletedProgressItems] = useState<
+    number | null
+  >(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
 
   const API_BASE_URL =
@@ -134,6 +142,8 @@ export default function HomeScreen() {
       if (!accessToken) {
         setOverallProgressPercent(null);
         setDbLearningUnitProgress({});
+        setTotalProgressItems(null);
+        setCompletedProgressItems(null);
         return;
       }
 
@@ -151,10 +161,30 @@ export default function HomeScreen() {
         const data: OverallProgressResponse = await response.json();
         setOverallProgressPercent(data.progressPercent ?? 0);
         setDbLearningUnitProgress(data.learningUnitProgress ?? {});
+        setTotalProgressItems(data.totalProgressItems ?? null);
+        setCompletedProgressItems(data.completedProgressItems ?? null);
+
+        // Reflect DB progress into already-loaded tasks (if user opened sections early)
+        setSections((prev) =>
+          prev.map((section) => ({
+            ...section,
+            tasks: section.tasks.map((task) => {
+              const dbTask = data.learningUnitProgress?.[task.id];
+              if (!dbTask) return task;
+              return {
+                ...task,
+                vocab: dbTask.vocab,
+                listen: dbTask.listen,
+              };
+            }),
+          })),
+        );
       } catch (error) {
         console.error("Failed to load overall progress from API:", error);
         setOverallProgressPercent(null);
         setDbLearningUnitProgress({});
+        setTotalProgressItems(null);
+        setCompletedProgressItems(null);
       }
     };
 
@@ -242,23 +272,15 @@ export default function HomeScreen() {
 
       const tasks = tasksBySituation.flat();
 
-      // Merge DB progress first, then local fallback if the user is offline.
-      let mergedTasks = tasks;
-      try {
-        const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-        const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
-        mergedTasks = tasks.map((task) => {
-          const dbProgress = dbLearningUnitProgress[task.id];
-          const taskProgress = dbProgress ?? progress[placeId]?.[task.id] ?? {};
-          return {
-            ...task,
-            vocab: taskProgress.vocab ?? task.vocab,
-            listen: taskProgress.listen ?? task.listen,
-          };
-        });
-      } catch (e) {
-        console.error("Failed to apply persisted progress for place", e);
-      }
+      // DB is the source of truth for toggle status
+      const mergedTasks = tasks.map((task) => {
+        const dbProgress = dbLearningUnitProgress[task.id];
+        return {
+          ...task,
+          vocab: dbProgress?.vocab ?? task.vocab,
+          listen: dbProgress?.listen ?? task.listen,
+        };
+      });
 
       setSections((prev) =>
         prev.map((section) =>
@@ -338,59 +360,6 @@ export default function HomeScreen() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const readProgress = () => {
-      try {
-        const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-        return stored ? (JSON.parse(stored) as TaskProgress) : {};
-      } catch {
-        return {};
-      }
-    };
-
-    const applyProgress = (progress: TaskProgress) => {
-      setSections((prev) =>
-        prev.map((section) => {
-          const sectionProgress = progress[section.id] ?? {};
-          return {
-            ...section,
-            tasks: section.tasks.map((task) => {
-              const taskProgress = sectionProgress[task.id] ?? {};
-              return {
-                ...task,
-                vocab: taskProgress.vocab ?? task.vocab,
-                listen: taskProgress.listen ?? task.listen,
-              };
-            }),
-          };
-        }),
-      );
-    };
-
-    const syncProgress = () => {
-      const progress = readProgress();
-      applyProgress(progress);
-    };
-
-    syncProgress();
-
-    const handleVisibility = () => {
-      if (!document.hidden) syncProgress();
-    };
-
-    window.addEventListener("focus", syncProgress);
-    window.addEventListener(PROGRESS_EVENT, syncProgress);
-    document.addEventListener("visibilitychange", handleVisibility);
-
-    return () => {
-      window.removeEventListener("focus", syncProgress);
-      window.removeEventListener(PROGRESS_EVENT, syncProgress);
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, []);
-
   const { total, done } = useMemo(() => {
     let totalCount = 0;
     let doneCount = 0;
@@ -460,40 +429,61 @@ export default function HomeScreen() {
       .find((section) => section.id === sectionId)
       ?.tasks.find((task) => task.id === taskId)?.[field];
 
-    setSections((prev) =>
-      prev.map((section) => {
-        if (section.id !== sectionId) return section;
+    const previousSections = sections;
+    const previousOverallProgress = overallProgressPercent;
+    const previousDbProgress = dbLearningUnitProgress;
+    const previousTotalProgressItems = totalProgressItems;
+    const previousCompletedProgressItems = completedProgressItems;
 
-        return {
-          ...section,
-          tasks: section.tasks.map((task) => {
-            if (task.id !== taskId) return task;
-            return { ...task, [field]: !task[field] };
-          }),
-        };
-      }),
-    );
+    const nextSections = previousSections.map((section) => {
+      if (section.id !== sectionId) return section;
+
+      return {
+        ...section,
+        tasks: section.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          return { ...task, [field]: !task[field] };
+        }),
+      };
+    });
+
+    setSections(nextSections);
+
+    if (
+      typeof previousTotalProgressItems === "number" &&
+      previousTotalProgressItems > 0 &&
+      typeof previousCompletedProgressItems === "number"
+    ) {
+      const delta = nextValue ? 1 : -1;
+      const optimisticCompleted = Math.min(
+        previousTotalProgressItems,
+        Math.max(0, previousCompletedProgressItems + delta),
+      );
+      setCompletedProgressItems(optimisticCompleted);
+      setOverallProgressPercent(
+        Math.round((optimisticCompleted / previousTotalProgressItems) * 100),
+      );
+    } else {
+      let optimisticTotal = 0;
+      let optimisticDone = 0;
+      for (const section of nextSections) {
+        for (const task of section.tasks) {
+          optimisticTotal += 2;
+          optimisticDone += Number(task.vocab) + Number(task.listen);
+        }
+      }
+
+      setOverallProgressPercent(
+        optimisticTotal > 0
+          ? Math.round((optimisticDone / optimisticTotal) * 100)
+          : 0,
+      );
+    }
 
     if (typeof window === "undefined") return;
 
     try {
       const accessToken = localStorage.getItem("auth_token");
-      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
-
-      if (!progress[sectionId]) {
-        progress[sectionId] = {};
-      }
-      if (!progress[sectionId][taskId]) {
-        progress[sectionId][taskId] = {};
-      }
-
-      const current = Boolean(progress[sectionId][taskId][field]);
-      progress[sectionId][taskId][field] = !current;
-
-      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
-      window.dispatchEvent(new Event(PROGRESS_EVENT));
-      setOverallProgressPercent(null);
 
       if (accessToken) {
         void fetch(
@@ -518,13 +508,24 @@ export default function HomeScreen() {
             const result: OverallProgressResponse = await response.json();
             setOverallProgressPercent(result.progressPercent ?? null);
             setDbLearningUnitProgress(result.learningUnitProgress ?? {});
+            setTotalProgressItems(result.totalProgressItems ?? null);
+            setCompletedProgressItems(result.completedProgressItems ?? null);
           })
           .catch((error) => {
             console.error("Failed to persist toggle progress", error);
-            setOverallProgressPercent(null);
+            setSections(previousSections);
+            setOverallProgressPercent(previousOverallProgress);
+            setDbLearningUnitProgress(previousDbProgress);
+            setTotalProgressItems(previousTotalProgressItems);
+            setCompletedProgressItems(previousCompletedProgressItems);
           });
       }
     } catch (error) {
+      setSections(previousSections);
+      setOverallProgressPercent(previousOverallProgress);
+      setDbLearningUnitProgress(previousDbProgress);
+      setTotalProgressItems(previousTotalProgressItems);
+      setCompletedProgressItems(previousCompletedProgressItems);
       console.error("Failed to update task progress", error);
     }
   };
