@@ -106,32 +106,6 @@ export default function VocabScreen() {
   const isLastCard = cards.length > 0 && index >= cards.length - 1;
   const hasFlippedAll = cards.length > 0 && flippedCardIds.size >= cards.length;
 
-  const listeningHref = learningUnitId
-    ? `/listening?learningUnitId=${encodeURIComponent(learningUnitId)}`
-    : "/listening";
-
-  const updateLastSelectionMode = (mode: "vocab" | "listen") => {
-    if (typeof window === "undefined") return;
-
-    try {
-      const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!raw) return;
-
-      const parsed = JSON.parse(raw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
-
-      localStorage.setItem(
-        LAST_SELECTION_STORAGE_KEY,
-        JSON.stringify({ ...parsed, mode }),
-      );
-    } catch {
-      // Ignore parsing errors
-    }
-  };
-
   const markVocabCompletion = () => {
     if (typeof window === "undefined") return;
 
@@ -282,8 +256,7 @@ export default function VocabScreen() {
                 <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
               </Link>
               <Link
-                href={listeningHref}
-                onClick={() => updateLastSelectionMode("listen")}
+                href="/listening"
                 className="pb-2 text-(--vv-muted) transition hover:text-(--vv-accent-strong)"
               >
                 聞き取り
