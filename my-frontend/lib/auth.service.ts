@@ -1,3 +1,6 @@
+import { api } from './api';
+import { ErrorHandler } from './error-handler';
+
 interface LoginResponse {
   access_token: string;
   refresh_token: string;
@@ -19,18 +22,15 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3
 
 export const authService = {
   async login(email: string, password: string): Promise<LoginResponse> {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'ログインに失敗しました');
+    try {
+      const response = await api.post<LoginResponse>('/auth/login', { email, password }, {
+        skipAuth: true,
+      });
+      return response;
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
     }
-
-    return response.json();
   },
 
   async register(
@@ -38,71 +38,83 @@ export const authService = {
     email: string,
     password: string,
   ): Promise<LoginResponse> {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || '登録に失敗しました');
+    try {
+      const response = await api.post<LoginResponse>('/auth/register', { name, email, password }, {
+        skipAuth: true,
+      });
+      return response;
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
     }
-
-    return response.json();
   },
 
   async refreshToken(refreshToken: string): Promise<RefreshTokenResponse> {
-    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Failed to refresh token');
+    try {
+      const response = await api.post<RefreshTokenResponse>(
+        '/auth/refresh',
+        { refresh_token: refreshToken },
+        { skipAuth: true },
+      );
+      return response;
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
     }
-
-    return response.json();
   },
 
   async logout(accessToken: string): Promise<void> {
-    await fetch(`${API_BASE_URL}/auth/logout`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    try {
+      await api.post('/auth/logout', {});
+    } catch (error) {
+      // Silently fail on logout - user wants to logout anyway
+      console.error('Logout failed:', error);
+    }
   },
 
   async revokeToken(accessToken: string, reason?: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/auth/revoke`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ reason: reason || 'logout' }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to revoke token');
+    try {
+      await api.post('/auth/revoke', { reason: reason || 'logout' });
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
     }
   },
 
   async revokeAllTokens(accessToken: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/auth/revoke-all`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    try {
+      await api.post('/auth/revoke-all', {});
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
+    }
+  },
 
-    if (!response.ok) {
-      throw new Error('Failed to revoke all tokens');
+  async changePassword(
+    currentPassword: string,
+    newPassword: string,
+    confirmPassword: string,
+  ): Promise<any> {
+    try {
+      const response = await api.post('/auth/change-password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      });
+      return response;
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
+    }
+  },
+
+  async getAuditHistory(limit = 50): Promise<any> {
+    try {
+      const response = await api.get(`/auth/audit-history`);
+      return response;
+    } catch (error) {
+      const parsedError = ErrorHandler.parseError(error);
+      throw new Error(parsedError.message);
     }
   },
 };
