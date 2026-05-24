@@ -8,6 +8,7 @@ const ListeningLesson = require('./listeningLesson.model');
 const ListeningSession = require('./listeningSession.model');
 const TranscriptLine = require('./transcriptLine.model');
 const UserProgress = require('./userProgress.model');
+const EnvironmentSound = require('./environmentSound.model');
 
 module.exports = {
   User,
@@ -20,4 +21,6 @@ module.exports = {
   ListeningSession,
   TranscriptLine,
   UserProgress,
+  EnvironmentSound,
 };
+

@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Post, Body, UseGuards, Request, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Put, Body, UseGuards, Request, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -73,4 +73,17 @@ export class UsersController {
     const avatarUrl = `/avatars/${file.filename}`;
     return this.usersService.updateAvatar(req.user.userId, avatarUrl);
   }
+
+  @Get('me/listening-settings')
+  @ApiOperation({ summary: 'Lấy cài đặt luyện nghe' })
+  getListeningSettings(@Request() req: any) {
+    return this.usersService.getListeningSettings(req.user.userId);
+  }
+
+  @Put('me/listening-settings')
+  @ApiOperation({ summary: 'Cập nhật cài đặt luyện nghe' })
+  updateListeningSettings(@Request() req: any, @Body() updateDto: import('./dto/update-listening-settings.dto.js').UpdateListeningSettingsDto) {
+    return this.usersService.updateListeningSettings(req.user.userId, updateDto);
+  }
 }
+

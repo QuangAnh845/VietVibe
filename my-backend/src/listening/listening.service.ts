@@ -7,9 +7,15 @@ import {
 import * as path from 'path';
 import { AudioProcessingQueryDto } from './dto/audio-processing-query.dto';
 import { CreateListeningDto } from './dto/create-listening.dto';
+import { CreateLearningUnitDto } from './dto/create-learning-unit.dto';
+import { CreatePlaceDto } from './dto/create-place.dto';
+import { CreateSituationDto } from './dto/create-situation.dto';
 import { StartListeningSessionDto } from './dto/start-listening-session.dto';
+import { UpdateLearningUnitDto } from './dto/update-learning-unit.dto';
 import { UpdateListeningDto } from './dto/update-listening.dto';
 import { UpdateListeningSessionDto } from './dto/update-listening-session.dto';
+import { UpdatePlaceDto } from './dto/update-place.dto';
+import { UpdateSituationDto } from './dto/update-situation.dto';
 import {
   AMBIENT_SOUNDS,
   DEFAULT_AMBIENT_SOUND,
@@ -97,6 +103,255 @@ export class ListeningService {
 
   async getAllListeningLessons() {
     return ListeningLesson.find().sort({ created_at: 1 });
+  }
+
+  async getAllSituations() {
+    const situations = await Situation.find().sort({ created_at: 1 });
+    return situations.map((situation) => this.mapSituation(situation));
+  }
+
+  async getAllLearningUnits() {
+    const units = await LearningUnit.find().sort({ created_at: 1 });
+    const unitsWithLevel = await Promise.all(
+      units.map(async (unit) => {
+        const level = await Level.findById(unit.level_id);
+        return this.mapLearningUnit(unit, level);
+      }),
+    );
+
+    return unitsWithLevel;
+  }
+
+  async createPlace(createDto: CreatePlaceDto) {
+    const place = await Place.create({
+      name_vi: createDto.nameVi,
+      name_ja: createDto.nameJa,
+      description: createDto.description ?? null,
+      avatar_url: createDto.avatarUrl ?? null,
+    });
+
+    return this.mapPlace(place);
+  }
+
+  async updatePlace(id: string, updateDto: UpdatePlaceDto) {
+    const placeId = this.toObjectId(id);
+    const place = await Place.findById(placeId);
+    if (!place) {
+      throw new NotFoundException('Không tìm thấy địa điểm để cập nhật.');
+    }
+
+    const updatePayload: Record<string, unknown> = {};
+    if (updateDto.nameVi !== undefined) {
+      updatePayload.name_vi = updateDto.nameVi;
+    }
+    if (updateDto.nameJa !== undefined) {
+      updatePayload.name_ja = updateDto.nameJa;
+    }
+    if (updateDto.description !== undefined) {
+      updatePayload.description = updateDto.description;
+    }
+    if (updateDto.avatarUrl !== undefined) {
+      updatePayload.avatar_url = updateDto.avatarUrl;
+    }
+
+    const updatedPlace = await Place.findByIdAndUpdate(placeId, updatePayload, {
+      returnDocument: 'after',
+    });
+
+    return this.mapPlace(updatedPlace);
+  }
+
+  async deletePlace(id: string) {
+    const placeId = this.toObjectId(id);
+    const place = await Place.findByIdAndDelete(placeId);
+    if (!place) {
+      throw new NotFoundException('Không tìm thấy địa điểm để xóa.');
+    }
+
+    const situations = await Situation.find({ place_id: placeId });
+    const situationIds = situations.map((situation) => situation._id);
+    const learningUnits = await LearningUnit.find({
+      situation_id: { $in: situationIds },
+    });
+    const learningUnitIds = learningUnits.map((unit) => unit._id);
+
+    await this.deleteLearningUnitDependencies(learningUnitIds);
+    await LearningUnit.deleteMany({ situation_id: { $in: situationIds } });
+    await Situation.deleteMany({ place_id: placeId });
+
+    return { deleted: true };
+  }
+
+  async createSituation(createDto: CreateSituationDto) {
+    const place = await Place.findById(this.toObjectId(createDto.placeId));
+    if (!place) {
+      throw new NotFoundException('Không tìm thấy địa điểm.');
+    }
+
+    const situation = await Situation.create({
+      place_id: createDto.placeId,
+      title_vi: createDto.titleVi,
+      title_ja: createDto.titleJa,
+      description: createDto.description ?? null,
+    });
+
+    return this.mapSituation(situation);
+  }
+
+  async updateSituation(id: string, updateDto: UpdateSituationDto) {
+    const situationId = this.toObjectId(id);
+    const situation = await Situation.findById(situationId);
+    if (!situation) {
+      throw new NotFoundException('Không tìm thấy tình huống để cập nhật.');
+    }
+
+    if (updateDto.placeId) {
+      const place = await Place.findById(this.toObjectId(updateDto.placeId));
+      if (!place) {
+        throw new NotFoundException('Không tìm thấy địa điểm.');
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = {};
+    if (updateDto.placeId !== undefined) {
+      updatePayload.place_id = updateDto.placeId;
+    }
+    if (updateDto.titleVi !== undefined) {
+      updatePayload.title_vi = updateDto.titleVi;
+    }
+    if (updateDto.titleJa !== undefined) {
+      updatePayload.title_ja = updateDto.titleJa;
+    }
+    if (updateDto.description !== undefined) {
+      updatePayload.description = updateDto.description;
+    }
+
+    const updatedSituation = await Situation.findByIdAndUpdate(
+      situationId,
+      updatePayload,
+      { returnDocument: 'after' },
+    );
+
+    return this.mapSituation(updatedSituation);
+  }
+
+  async deleteSituation(id: string) {
+    const situationId = this.toObjectId(id);
+    const situation = await Situation.findByIdAndDelete(situationId);
+    if (!situation) {
+      throw new NotFoundException('Không tìm thấy tình huống để xóa.');
+    }
+
+    const learningUnits = await LearningUnit.find({
+      situation_id: situationId,
+    });
+    const learningUnitIds = learningUnits.map((unit) => unit._id);
+
+    await this.deleteLearningUnitDependencies(learningUnitIds);
+    await LearningUnit.deleteMany({ situation_id: situationId });
+
+    return { deleted: true };
+  }
+
+  async createLearningUnit(createDto: CreateLearningUnitDto) {
+    const situation = await Situation.findById(this.toObjectId(createDto.situationId));
+    if (!situation) {
+      throw new NotFoundException('Không tìm thấy tình huống.');
+    }
+
+    const level = await Level.findById(this.toObjectId(createDto.levelId));
+    if (!level) {
+      throw new NotFoundException('Không tìm thấy level.');
+    }
+
+    const existingUnit = await LearningUnit.findOne({
+      situation_id: createDto.situationId,
+      level_id: createDto.levelId,
+    });
+    if (existingUnit) {
+      throw new BadRequestException('Learning unit đã tồn tại cho tình huống và level này.');
+    }
+
+    const learningUnit = await LearningUnit.create({
+      situation_id: createDto.situationId,
+      level_id: createDto.levelId,
+      title_vi: createDto.titleVi,
+      title_ja: createDto.titleJa,
+      description: createDto.description ?? null,
+    });
+
+    return this.mapLearningUnit(learningUnit, level);
+  }
+
+  async updateLearningUnit(id: string, updateDto: UpdateLearningUnitDto) {
+    const unitId = this.toObjectId(id);
+    const learningUnit = await LearningUnit.findById(unitId);
+    if (!learningUnit) {
+      throw new NotFoundException('Không tìm thấy learning unit để cập nhật.');
+    }
+
+    const nextSituationId = updateDto.situationId ?? String(learningUnit.situation_id);
+    const nextLevelId = updateDto.levelId ?? String(learningUnit.level_id);
+
+    if (updateDto.situationId) {
+      const situation = await Situation.findById(this.toObjectId(updateDto.situationId));
+      if (!situation) {
+        throw new NotFoundException('Không tìm thấy tình huống.');
+      }
+    }
+
+    if (updateDto.levelId) {
+      const level = await Level.findById(this.toObjectId(updateDto.levelId));
+      if (!level) {
+        throw new NotFoundException('Không tìm thấy level.');
+      }
+    }
+
+    const duplicate = await LearningUnit.findOne({
+      _id: { $ne: unitId },
+      situation_id: nextSituationId,
+      level_id: nextLevelId,
+    });
+    if (duplicate) {
+      throw new BadRequestException('Learning unit đã tồn tại cho tình huống và level này.');
+    }
+
+    const updatePayload: Record<string, unknown> = {};
+    if (updateDto.situationId !== undefined) {
+      updatePayload.situation_id = updateDto.situationId;
+    }
+    if (updateDto.levelId !== undefined) {
+      updatePayload.level_id = updateDto.levelId;
+    }
+    if (updateDto.titleVi !== undefined) {
+      updatePayload.title_vi = updateDto.titleVi;
+    }
+    if (updateDto.titleJa !== undefined) {
+      updatePayload.title_ja = updateDto.titleJa;
+    }
+    if (updateDto.description !== undefined) {
+      updatePayload.description = updateDto.description;
+    }
+
+    const updatedLearningUnit = await LearningUnit.findByIdAndUpdate(
+      unitId,
+      updatePayload,
+      { returnDocument: 'after' },
+    );
+
+    const level = await Level.findById(updatedLearningUnit.level_id);
+    return this.mapLearningUnit(updatedLearningUnit, level);
+  }
+
+  async deleteLearningUnit(id: string) {
+    const unitId = this.toObjectId(id);
+    const learningUnit = await LearningUnit.findByIdAndDelete(unitId);
+    if (!learningUnit) {
+      throw new NotFoundException('Không tìm thấy learning unit để xóa.');
+    }
+
+    await this.deleteLearningUnitDependencies([unitId]);
+    return { deleted: true };
   }
 
   async getListeningLessonById(id: string) {
@@ -744,6 +999,24 @@ export class ListeningService {
     );
   }
 
+  private async deleteLearningUnitDependencies(learningUnitIds: any[]) {
+    if (!learningUnitIds.length) {
+      return;
+    }
+
+    const lessons = await ListeningLesson.find({
+      learning_unit_id: { $in: learningUnitIds },
+    });
+    const lessonIds = lessons.map((lesson) => lesson._id);
+
+    await TranscriptLine.deleteMany({ lesson_id: { $in: lessonIds } });
+    await ListeningSession.deleteMany({ lesson_id: { $in: lessonIds } });
+    await UserProgress.deleteMany({ learning_unit_id: { $in: learningUnitIds } });
+    await ListeningLesson.deleteMany({
+      learning_unit_id: { $in: learningUnitIds },
+    });
+  }
+
   private toObjectId(value: string) {
     if (!Types.ObjectId.isValid(value)) {
       throw new NotFoundException('Id không hợp lệ.');
@@ -758,6 +1031,7 @@ export class ListeningService {
       nameVi: place.name_vi,
       nameJa: place.name_ja,
       description: place.description ?? null,
+      avatarUrl: place.avatar_url ?? null,
     };
   }
 
