@@ -487,6 +487,62 @@ export default function HomeScreen() {
     );
   };
 
+  const handleTaskOpen = (sectionId: string, taskId: string) => {
+    let mode: ToggleField = "vocab";
+
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as {
+            sectionId: string;
+            taskId: string;
+            mode: ToggleField;
+          };
+
+          if (parsed.sectionId === sectionId && parsed.taskId === taskId) {
+            mode = parsed.mode;
+          }
+        }
+      } catch {
+        // Ignore parsing errors
+      }
+    }
+
+    handleTaskLaunch(sectionId, taskId, mode);
+  };
+
+  const handleBadgeToggle = (
+    sectionId: string,
+    taskId: string,
+    field: ToggleField,
+  ) => {
+    if (typeof window === "undefined") return;
+
+    const currentValue =
+      sections
+        .find((section) => section.id === sectionId)
+        ?.tasks.find((task) => task.id === taskId)?.[field] ?? false;
+
+    try {
+      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
+
+      if (!progress[sectionId]) {
+        progress[sectionId] = {};
+      }
+      if (!progress[sectionId][taskId]) {
+        progress[sectionId][taskId] = {};
+      }
+
+      progress[sectionId][taskId][field] = !currentValue;
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+      window.dispatchEvent(new Event(PROGRESS_EVENT));
+    } catch (error) {
+      console.error("Failed to update progress", error);
+    }
+  };
+
   return (
     <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
       {showNotification && (
@@ -654,15 +710,21 @@ export default function HomeScreen() {
                               key={task.id}
                               className="flex items-center justify-between gap-3"
                             >
-                              <p className="text-sm font-medium text-foreground">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleTaskOpen(section.id, task.id)
+                                }
+                                className="flex-1 text-left text-sm font-medium text-foreground"
+                              >
                                 {task.title}
-                              </p>
+                              </button>
                               <div className="flex items-center gap-2">
                                 <ToggleButton
                                   label="語彙"
                                   active={task.vocab}
                                   onClick={() =>
-                                    handleTaskLaunch(
+                                    handleBadgeToggle(
                                       section.id,
                                       task.id,
                                       "vocab",
@@ -673,7 +735,7 @@ export default function HomeScreen() {
                                   label="聞く"
                                   active={task.listen}
                                   onClick={() =>
-                                    handleTaskLaunch(
+                                    handleBadgeToggle(
                                       section.id,
                                       task.id,
                                       "listen",
