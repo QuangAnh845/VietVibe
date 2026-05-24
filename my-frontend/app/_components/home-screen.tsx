@@ -62,6 +62,13 @@ type OverallProgressResponse = {
   progressPercent: number;
   totalLearningUnits: number;
   completedLearningUnits: number;
+  learningUnitProgress?: Record<
+    string,
+    {
+      vocab: boolean;
+      listen: boolean;
+    }
+  >;
 };
 
 const PROGRESS_STORAGE_KEY = "vv-task-progress";
@@ -84,12 +91,18 @@ export default function HomeScreen() {
   const router = useRouter();
   const [sections, setSections] = useState<Section[]>([]);
   const [openIds, setOpenIds] = useState<string[]>([]);
+  const [loadingPlaceIds, setLoadingPlaceIds] = useState<string[]>([]);
   const [query, setQuery] = useState<string>("");
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMode, setNotificationMode] = useState<
     "login" | "register"
   >("login");
-  const [overallProgressPercent, setOverallProgressPercent] = useState<number | null>(null);
+  const [overallProgressPercent, setOverallProgressPercent] = useState<
+    number | null
+  >(null);
+  const [dbLearningUnitProgress, setDbLearningUnitProgress] = useState<
+    Record<string, { vocab: boolean; listen: boolean }>
+  >({});
   const [isLoadingData, setIsLoadingData] = useState(true);
 
   const API_BASE_URL =
@@ -112,7 +125,7 @@ export default function HomeScreen() {
     }
   }, [router]);
 
-  // Load overall progress from backend for the progress bar
+  // Load overall progress and per-unit states from backend.
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -120,6 +133,7 @@ export default function HomeScreen() {
       const accessToken = localStorage.getItem("auth_token");
       if (!accessToken) {
         setOverallProgressPercent(null);
+        setDbLearningUnitProgress({});
         return;
       }
 
@@ -136,9 +150,11 @@ export default function HomeScreen() {
 
         const data: OverallProgressResponse = await response.json();
         setOverallProgressPercent(data.progressPercent ?? 0);
+        setDbLearningUnitProgress(data.learningUnitProgress ?? {});
       } catch (error) {
         console.error("Failed to load overall progress from API:", error);
         setOverallProgressPercent(null);
+        setDbLearningUnitProgress({});
       }
     };
 
@@ -151,95 +167,35 @@ export default function HomeScreen() {
       try {
         setIsLoadingData(true);
 
-        // Fetch places
+        // Fetch places only (do not fetch situations/learning units yet)
         const placesRes = await fetch(`${API_BASE_URL}/listening/places`);
         if (!placesRes.ok) throw new Error("Failed to fetch places");
         const places: Place[] = await placesRes.json();
 
-        const sectionsData = await Promise.all(
-          places.map(async (place) => {
-            const situationsRes = await fetch(
-              `${API_BASE_URL}/listening/places/${place.id}/situations`,
-            );
-            if (!situationsRes.ok) return null;
-            const situations: Situation[] = await situationsRes.json();
+        // Build minimal sections with empty tasks for now
+        const nextSections: Section[] = places.map((place) => {
+          const placeKey = place.nameVi.toLowerCase().replace(/\s+/g, "-");
+          const icon: IconName = Object.keys(placeIconMap).some((key) =>
+            placeKey.includes(key),
+          )
+            ? placeIconMap[
+                Object.keys(placeIconMap).find((key) =>
+                  placeKey.includes(key),
+                ) as string
+              ]
+            : "cart";
 
-            const tasksBySituation = await Promise.all(
-              situations.map(async (situation) => {
-                const learningUnitsRes = await fetch(
-                  `${API_BASE_URL}/listening/situations/${situation.id}/learning-units`,
-                );
-                if (!learningUnitsRes.ok) return [] as Task[];
+          return {
+            id: place.id,
+            label: place.nameJa,
+            icon,
+            tasks: [],
+          };
+        });
 
-                const learningUnits: LearningUnit[] =
-                  await learningUnitsRes.json();
-
-                return learningUnits.map((unit) => ({
-                  id: unit.id,
-                  title: unit.titleJa,
-                  vocab: false,
-                  listen: false,
-                  learningUnitId: unit.id,
-                }));
-              }),
-            );
-
-            const tasks = tasksBySituation.flat();
-
-            const placeKey = place.nameVi.toLowerCase().replace(/\s+/g, "-");
-            const icon: IconName = Object.keys(placeIconMap).some((key) =>
-              placeKey.includes(key),
-            )
-              ? placeIconMap[
-                  Object.keys(placeIconMap).find((key) =>
-                    placeKey.includes(key),
-                  ) as string
-                ]
-              : "cart";
-
-            return {
-              id: place.id,
-              label: place.nameJa,
-              icon,
-              tasks,
-            };
-          }),
-        );
-
-        const nextSections = sectionsData.filter(
-          (section): section is Section => section !== null,
-        );
-
-        if (nextSections.length > 0) {
-          let resolvedSections = nextSections;
-
-          if (typeof window !== "undefined") {
-            try {
-              const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-              const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
-
-              resolvedSections = nextSections.map((section) => {
-                const sectionProgress = progress[section.id] ?? {};
-                return {
-                  ...section,
-                  tasks: section.tasks.map((task) => {
-                    const taskProgress = sectionProgress[task.id] ?? {};
-                    return {
-                      ...task,
-                      vocab: taskProgress.vocab ?? task.vocab,
-                      listen: taskProgress.listen ?? task.listen,
-                    };
-                  }),
-                };
-              });
-            } catch (error) {
-              console.error("Failed to read progress", error);
-            }
-          }
-
-          setSections(resolvedSections);
-          setOpenIds([resolvedSections[0]?.id ?? ""]);
-        }
+        // Apply persisted progress if any (will be applied once tasks are loaded per-section)
+        setSections(nextSections);
+        setOpenIds([]);
       } catch (error) {
         console.error("Failed to load data from API:", error);
         setSections([]);
@@ -251,6 +207,89 @@ export default function HomeScreen() {
 
     loadData();
   }, [API_BASE_URL]);
+
+  // Fetch situations + learning-units for a single place when opening it
+  const fetchPlaceDetails = async (placeId: string) => {
+    // mark this place as loading so UI can show a spinner/skeleton
+    setLoadingPlaceIds((prev) =>
+      prev.includes(placeId) ? prev : [...prev, placeId],
+    );
+    try {
+      const situationsRes = await fetch(
+        `${API_BASE_URL}/listening/places/${placeId}/situations`,
+      );
+      if (!situationsRes.ok) return;
+      const situations: Situation[] = await situationsRes.json();
+
+      const tasksBySituation = await Promise.all(
+        situations.map(async (situation) => {
+          const learningUnitsRes = await fetch(
+            `${API_BASE_URL}/listening/situations/${situation.id}/learning-units`,
+          );
+          if (!learningUnitsRes.ok) return [] as Task[];
+
+          const learningUnits: LearningUnit[] = await learningUnitsRes.json();
+
+          return learningUnits.map((unit) => ({
+            id: unit.id,
+            title: unit.titleJa,
+            vocab: false,
+            listen: false,
+            learningUnitId: unit.id,
+          }));
+        }),
+      );
+
+      const tasks = tasksBySituation.flat();
+
+      // Merge DB progress first, then local fallback if the user is offline.
+      let mergedTasks = tasks;
+      try {
+        const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+        const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
+        mergedTasks = tasks.map((task) => {
+          const dbProgress = dbLearningUnitProgress[task.id];
+          const taskProgress = dbProgress ?? progress[placeId]?.[task.id] ?? {};
+          return {
+            ...task,
+            vocab: taskProgress.vocab ?? task.vocab,
+            listen: taskProgress.listen ?? task.listen,
+          };
+        });
+      } catch (e) {
+        console.error("Failed to apply persisted progress for place", e);
+      }
+
+      setSections((prev) =>
+        prev.map((section) =>
+          section.id === placeId ? { ...section, tasks: mergedTasks } : section,
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to fetch place details:", error);
+    } finally {
+      setLoadingPlaceIds((prev) => prev.filter((id) => id !== placeId));
+    }
+  };
+
+  const handleToggleSection = async (sectionId: string) => {
+    const isOpen = openIds.includes(sectionId);
+    if (isOpen) {
+      setOpenIds((prev) => prev.filter((id) => id !== sectionId));
+      return;
+    }
+
+    // Open immediately so UI can render a loading skeleton while we fetch
+    setOpenIds((prev) =>
+      prev.includes(sectionId) ? prev : [...prev, sectionId],
+    );
+
+    // If tasks not loaded yet, fetch them (skeleton will show because of loadingPlaceIds)
+    const section = sections.find((s) => s.id === sectionId);
+    if (section && section.tasks.length === 0) {
+      await fetchPlaceDetails(sectionId);
+    }
+  };
 
   // Handle login/register notification
   useEffect(() => {
@@ -409,9 +448,85 @@ export default function HomeScreen() {
       ? `?learningUnitId=${encodeURIComponent(task.learningUnitId)}`
       : "";
 
-    router.push(
-      `${field === "vocab" ? "/vocab" : "/listening"}${query}`,
+    router.push(`${field === "vocab" ? "/vocab" : "/listening"}${query}`);
+  };
+
+  const handleTaskToggle = (
+    sectionId: string,
+    taskId: string,
+    field: ToggleField,
+  ) => {
+    const nextValue = !sections
+      .find((section) => section.id === sectionId)
+      ?.tasks.find((task) => task.id === taskId)?.[field];
+
+    setSections((prev) =>
+      prev.map((section) => {
+        if (section.id !== sectionId) return section;
+
+        return {
+          ...section,
+          tasks: section.tasks.map((task) => {
+            if (task.id !== taskId) return task;
+            return { ...task, [field]: !task[field] };
+          }),
+        };
+      }),
     );
+
+    if (typeof window === "undefined") return;
+
+    try {
+      const accessToken = localStorage.getItem("auth_token");
+      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
+
+      if (!progress[sectionId]) {
+        progress[sectionId] = {};
+      }
+      if (!progress[sectionId][taskId]) {
+        progress[sectionId][taskId] = {};
+      }
+
+      const current = Boolean(progress[sectionId][taskId][field]);
+      progress[sectionId][taskId][field] = !current;
+
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+      window.dispatchEvent(new Event(PROGRESS_EVENT));
+      setOverallProgressPercent(null);
+
+      if (accessToken) {
+        void fetch(
+          `${API_BASE_URL}/users/me/progress/learning-units/${taskId}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              field,
+              completed: nextValue,
+            }),
+          },
+        )
+          .then(async (response) => {
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result: OverallProgressResponse = await response.json();
+            setOverallProgressPercent(result.progressPercent ?? null);
+            setDbLearningUnitProgress(result.learningUnitProgress ?? {});
+          })
+          .catch((error) => {
+            console.error("Failed to persist toggle progress", error);
+            setOverallProgressPercent(null);
+          });
+      }
+    } catch (error) {
+      console.error("Failed to update task progress", error);
+    }
   };
 
   return (
@@ -484,11 +599,7 @@ export default function HomeScreen() {
                       <button
                         type="button"
                         onClick={() => {
-                          setOpenIds((prev) =>
-                            prev.includes(section.id)
-                              ? prev
-                              : [...prev, section.id],
-                          );
+                          handleToggleSection(section.id);
                           setQuery("");
                         }}
                         className="flex w-full items-center justify-between gap-3 px-3 py-2"
@@ -525,7 +636,9 @@ export default function HomeScreen() {
           <div className="mt-3 h-2 w-full rounded-full bg-(--vv-border)">
             <div
               className={`h-full rounded-full transition-[width] duration-500 ${
-                isLoadingData ? "bg-linear-to-r from-[#d7ddd8] via-[#eef2ec] to-[#d7ddd8] animate-pulse" : "bg-(--vv-accent)"
+                isLoadingData
+                  ? "bg-linear-to-r from-[#d7ddd8] via-[#eef2ec] to-[#d7ddd8] animate-pulse"
+                  : "bg-(--vv-accent)"
               }`}
               style={{ width: isLoadingData ? "42%" : `${progress}%` }}
             />
@@ -561,75 +674,66 @@ export default function HomeScreen() {
               </div>
             ) : (
               sections.map((section) => {
-              const isOpen = openIds.includes(section.id);
+                const isOpen = openIds.includes(section.id);
 
-              return (
-                <div
-                  key={section.id}
-                  className="rounded-2xl border border-(--vv-border) bg-white/80"
-                >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setOpenIds((prev) =>
-                        prev.includes(section.id)
-                          ? prev.filter((id) => id !== section.id)
-                          : [...prev, section.id],
-                      )
-                    }
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3"
+                return (
+                  <div
+                    key={section.id}
+                    className="rounded-2xl border border-(--vv-border) bg-white/80"
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center text-(--vv-accent-strong)">
-                        <Icon name={section.icon} className="h-5 w-5" />
-                      </span>
-                      <div className="text-left">
-                        <p className="text-sm font-semibold">{section.label}</p>
-                        <p className="text-xs text-(--vv-muted)">
-                          {section.tasks.length > 0
-                            ? `${section.tasks.length} レッスン`
-                            : "準備中"}
-                        </p>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSection(section.id)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 items-center justify-center text-(--vv-accent-strong)">
+                          <Icon name={section.icon} className="h-5 w-5" />
+                        </span>
+                        <div className="text-left">
+                          <p className="text-sm font-semibold">
+                            {section.label}
+                          </p>
+                          <p className="text-xs text-(--vv-muted)">
+                            {section.tasks.length > 0
+                              ? `${section.tasks.length} レッスン`
+                              : "準備中"}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                    <ChevronIcon
-                      className={`h-4 w-4 text-(--vv-muted) transition-transform ${
-                        isOpen ? "rotate-180" : "rotate-0"
-                      }`}
-                    />
-                  </button>
+                      <ChevronIcon
+                        className={`h-4 w-4 text-(--vv-muted) transition-transform ${
+                          isOpen ? "rotate-180" : "rotate-0"
+                        }`}
+                      />
+                    </button>
 
-                  {isOpen ? (
-                    <div className="border-t border-(--vv-border) px-4 py-3">
-                      {section.tasks.length === 0 ? (
-                        <p className="text-xs text-(--vv-muted)">
-                          まもなく追加されます。
-                        </p>
-                      ) : (
-                        <div className="flex flex-col gap-3">
-                          {section.tasks.map((task) => (
-                            <div
-                              key={task.id}
-                              className="flex items-center justify-between gap-3"
-                            >
-                              <p className="text-sm font-medium text-foreground">
-                                {task.title}
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <ToggleButton
-                                  label="語彙"
-                                  active={task.vocab}
-                                  onClick={() =>
-                                    handleTaskLaunch(
-                                      section.id,
-                                      task.id,
-                                      "vocab",
-                                    )
-                                  }
+                    {isOpen ? (
+                      <div className="border-t border-(--vv-border) px-4 py-3">
+                        {section.tasks.length === 0 ? (
+                          loadingPlaceIds.includes(section.id) ? (
+                            <div className="flex flex-col gap-2">
+                              {[1, 2].map((i) => (
+                                <div
+                                  key={i}
+                                  className="h-10 rounded-full bg-[#eef1ec] animate-pulse"
                                 />
-                                <ToggleButton
-                                  label="聞く"
-                                  active={task.listen}
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-(--vv-muted)">
+                              まもなく追加されます。
+                            </p>
+                          )
+                        ) : (
+                          <div className="flex flex-col gap-3">
+                            {section.tasks.map((task) => (
+                              <div
+                                key={task.id}
+                                className="flex items-center justify-between gap-3"
+                              >
+                                <button
+                                  type="button"
                                   onClick={() =>
                                     handleTaskLaunch(
                                       section.id,
@@ -637,16 +741,42 @@ export default function HomeScreen() {
                                       "listen",
                                     )
                                   }
-                                />
+                                  className="flex-1 text-left text-sm font-medium text-foreground hover:text-(--vv-accent-strong)"
+                                >
+                                  {task.title}
+                                </button>
+                                <div className="flex items-center gap-2">
+                                  <ToggleButton
+                                    label="語彙"
+                                    active={task.vocab}
+                                    onClick={() =>
+                                      handleTaskToggle(
+                                        section.id,
+                                        task.id,
+                                        "vocab",
+                                      )
+                                    }
+                                  />
+                                  <ToggleButton
+                                    label="聞く"
+                                    active={task.listen}
+                                    onClick={() =>
+                                      handleTaskToggle(
+                                        section.id,
+                                        task.id,
+                                        "listen",
+                                      )
+                                    }
+                                  />
+                                </div>
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              );
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                );
               })
             )}
           </div>

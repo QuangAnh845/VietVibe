@@ -1,5 +1,24 @@
-import { Controller, Get, Patch, Post, Put, Body, UseGuards, Request, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Patch,
+  Post,
+  Put,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
@@ -28,7 +47,9 @@ export class UsersController {
   }
 
   @Post('me/progress/vocabulary')
-  @ApiOperation({ summary: 'Mark a vocabulary card as viewed for current user' })
+  @ApiOperation({
+    summary: 'Mark a vocabulary card as viewed for current user',
+  })
   markVocabularyProgress(
     @Request() req: any,
     @Body()
@@ -44,15 +65,42 @@ export class UsersController {
     );
   }
 
+  @Patch('me/progress/learning-units/:learningUnitId')
+  @ApiOperation({
+    summary: 'Set vocab/listen toggle state for a learning unit',
+  })
+  setLearningUnitProgress(
+    @Request() req: any,
+    @Param('learningUnitId') learningUnitId: string,
+    @Body()
+    body: {
+      field: 'vocab' | 'listen';
+      completed: boolean;
+    },
+  ) {
+    return this.usersService.setLearningUnitToggleProgress(
+      req.user.userId,
+      learningUnitId,
+      body.field,
+      body.completed,
+    );
+  }
+
   @Patch('me/profile')
   @ApiOperation({ summary: 'Update user profile (name, email)' })
-  updateProfile(@Request() req: any, @Body() updateProfileDto: UpdateProfileDto) {
+  updateProfile(
+    @Request() req: any,
+    @Body() updateProfileDto: UpdateProfileDto,
+  ) {
     return this.usersService.updateProfile(req.user.userId, updateProfileDto);
   }
 
   @Patch('me/password')
   @ApiOperation({ summary: 'Update user password' })
-  updatePassword(@Request() req: any, @Body() updatePasswordDto: UpdatePasswordDto) {
+  updatePassword(
+    @Request() req: any,
+    @Body() updatePasswordDto: UpdatePasswordDto,
+  ) {
     return this.usersService.updatePassword(req.user.userId, updatePasswordDto);
   }
 
@@ -70,25 +118,31 @@ export class UsersController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './public/avatars',
-      filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        const ext = extname(file.originalname);
-        cb(null, `${uniqueSuffix}${ext}`);
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './public/avatars',
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname);
+          cb(null, `${uniqueSuffix}${ext}`);
+        },
+      }),
+      limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB
+      },
+      fileFilter: (req, file, cb) => {
+        if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|svg\+xml|webp)$/)) {
+          return cb(
+            new BadRequestException('Only image files are allowed!'),
+            false,
+          );
+        }
+        cb(null, true);
       },
     }),
-    limits: {
-      fileSize: 5 * 1024 * 1024, // 5MB
-    },
-    fileFilter: (req, file, cb) => {
-      if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|svg\+xml|webp)$/)) {
-        return cb(new BadRequestException('Only image files are allowed!'), false);
-      }
-      cb(null, true);
-    },
-  }))
+  )
   async uploadAvatar(@Request() req: any, @UploadedFile() file: any) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
@@ -105,8 +159,14 @@ export class UsersController {
 
   @Put('me/listening-settings')
   @ApiOperation({ summary: 'Cập nhật cài đặt luyện nghe' })
-  updateListeningSettings(@Request() req: any, @Body() updateDto: import('./dto/update-listening-settings.dto.js').UpdateListeningSettingsDto) {
-    return this.usersService.updateListeningSettings(req.user.userId, updateDto);
+  updateListeningSettings(
+    @Request() req: any,
+    @Body()
+    updateDto: import('./dto/update-listening-settings.dto.js').UpdateListeningSettingsDto,
+  ) {
+    return this.usersService.updateListeningSettings(
+      req.user.userId,
+      updateDto,
+    );
   }
 }
-
