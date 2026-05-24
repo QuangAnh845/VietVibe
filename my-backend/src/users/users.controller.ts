@@ -21,6 +21,29 @@ export class UsersController {
     return this.usersService.getProfile(req.user.userId);
   }
 
+  @Get('me/progress')
+  @ApiOperation({ summary: 'Get current user overall progress' })
+  getCurrentUserProgress(@Request() req: any) {
+    return this.usersService.getCurrentUserProgress(req.user.userId);
+  }
+
+  @Post('me/progress/vocabulary')
+  @ApiOperation({ summary: 'Mark a vocabulary card as viewed for current user' })
+  markVocabularyProgress(
+    @Request() req: any,
+    @Body()
+    body: {
+      learningUnitId: string;
+      vocabularyCardId: string;
+    },
+  ) {
+    return this.usersService.markVocabularyCardViewed(
+      req.user.userId,
+      body.learningUnitId,
+      body.vocabularyCardId,
+    );
+  }
+
   @Patch('me/profile')
   @ApiOperation({ summary: 'Update user profile (name, email)' })
   updateProfile(@Request() req: any, @Body() updateProfileDto: UpdateProfileDto) {

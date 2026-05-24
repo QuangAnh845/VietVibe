@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 type Task = {
   id: string;
@@ -58,6 +58,12 @@ type TaskProgress = Record<
   Record<string, { vocab?: boolean; listen?: boolean }>
 >;
 
+type OverallProgressResponse = {
+  progressPercent: number;
+  totalLearningUnits: number;
+  completedLearningUnits: number;
+};
+
 const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
 const PROGRESS_EVENT = "vv-progress-updated";
@@ -74,131 +80,17 @@ const placeIconMap: Record<string, IconName> = {
   taxi: "taxi",
 };
 
-const initialSections: Section[] = [
-  {
-    id: "super",
-    label: "スーパー",
-    icon: "cart",
-    tasks: [
-      {
-        id: "ask-price",
-        title: "商品の値段を聞く",
-        vocab: true,
-        listen: false,
-      },
-      {
-        id: "pay-register",
-        title: "レジで支払う",
-        vocab: true,
-        listen: true,
-      },
-      {
-        id: "find-item",
-        title: "商品を探す",
-        vocab: false,
-        listen: false,
-      },
-    ],
-  },
-  {
-    id: "restaurant",
-    label: "レストラン",
-    icon: "restaurant",
-    tasks: [
-      {
-        id: "order-dish",
-        title: "料理を注文する",
-        vocab: false,
-        listen: true,
-      },
-      {
-        id: "ask-bill",
-        title: "会計をお願いする",
-        vocab: true,
-        listen: false,
-      },
-    ],
-  },
-  {
-    id: "hospital",
-    label: "病院",
-    icon: "hospital",
-    tasks: [
-      {
-        id: "describe-symptoms",
-        title: "症状を説明する",
-        vocab: true,
-        listen: false,
-      },
-      {
-        id: "fill-form",
-        title: "問診票を書く",
-        vocab: false,
-        listen: false,
-      },
-    ],
-  },
-  {
-    id: "bus-terminal",
-    label: "バスターミナル",
-    icon: "bus",
-    tasks: [
-      {
-        id: "buy-ticket",
-        title: "チケットを買う",
-        vocab: false,
-        listen: true,
-      },
-    ],
-  },
-  {
-    id: "salon",
-    label: "美容室",
-    icon: "salon",
-    tasks: [
-      {
-        id: "book-appointment",
-        title: "予約を入れる",
-        vocab: false,
-        listen: false,
-      },
-    ],
-  },
-  {
-    id: "bank",
-    label: "銀行",
-    icon: "bank",
-    tasks: [
-      {
-        id: "open-account",
-        title: "口座を作る",
-        vocab: false,
-        listen: false,
-      },
-    ],
-  },
-  {
-    id: "taxi",
-    label: "タクシー",
-    icon: "taxi",
-    tasks: [],
-  },
-];
-
 export default function HomeScreen() {
   const router = useRouter();
-  const [sections, setSections] = useState<Section[]>(initialSections);
-  const [openIds, setOpenIds] = useState<string[]>(
-    initialSections[0]?.id ? [initialSections[0].id] : [],
-  );
+  const [sections, setSections] = useState<Section[]>([]);
+  const [openIds, setOpenIds] = useState<string[]>([]);
   const [query, setQuery] = useState<string>("");
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMode, setNotificationMode] = useState<
     "login" | "register"
   >("login");
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isLoadingData, setIsLoadingData] = useState(false);
-  const profileRef = useRef<HTMLDivElement | null>(null);
+  const [overallProgressPercent, setOverallProgressPercent] = useState<number | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(true);
 
   const API_BASE_URL =
     process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -219,6 +111,39 @@ export default function HomeScreen() {
       // Ignore parsing errors
     }
   }, [router]);
+
+  // Load overall progress from backend for the progress bar
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const loadOverallProgress = async () => {
+      const accessToken = localStorage.getItem("auth_token");
+      if (!accessToken) {
+        setOverallProgressPercent(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/users/me/progress`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch overall progress");
+        }
+
+        const data: OverallProgressResponse = await response.json();
+        setOverallProgressPercent(data.progressPercent ?? 0);
+      } catch (error) {
+        console.error("Failed to load overall progress from API:", error);
+        setOverallProgressPercent(null);
+      }
+    };
+
+    loadOverallProgress();
+  }, [API_BASE_URL]);
 
   // Load data from API
   useEffect(() => {
@@ -317,7 +242,8 @@ export default function HomeScreen() {
         }
       } catch (error) {
         console.error("Failed to load data from API:", error);
-        // Use fallback data
+        setSections([]);
+        setOpenIds([]);
       } finally {
         setIsLoadingData(false);
       }
@@ -441,7 +367,8 @@ export default function HomeScreen() {
     return { total: totalCount, done: doneCount };
   }, [sections]);
 
-  const progress = total === 0 ? 0 : Math.round((done / total) * 100);
+  const localProgress = total === 0 ? 0 : Math.round((done / total) * 100);
+  const progress = overallProgressPercent ?? localProgress;
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -592,17 +519,48 @@ export default function HomeScreen() {
               全体の進捗
             </p>
             <p className="text-sm font-semibold text-(--vv-accent-strong)">
-              {progress}%
+              {isLoadingData ? "..." : `${progress}%`}
             </p>
           </div>
           <div className="mt-3 h-2 w-full rounded-full bg-(--vv-border)">
             <div
-              className="h-full rounded-full bg-(--vv-accent) transition-[width] duration-500"
-              style={{ width: `${progress}%` }}
+              className={`h-full rounded-full transition-[width] duration-500 ${
+                isLoadingData ? "bg-linear-to-r from-[#d7ddd8] via-[#eef2ec] to-[#d7ddd8] animate-pulse" : "bg-(--vv-accent)"
+              }`}
+              style={{ width: isLoadingData ? "42%" : `${progress}%` }}
             />
           </div>
           <div className="mt-2 flex flex-col gap-3">
-            {sections.map((section) => {
+            {isLoadingData ? (
+              <div className="flex flex-col gap-3 py-1">
+                {[1, 2, 3].map((item) => (
+                  <div
+                    key={item}
+                    className="rounded-2xl border border-(--vv-border) bg-white/80 p-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full bg-[#e7ebe6] animate-pulse" />
+                        <div className="space-y-2">
+                          <div className="h-3 w-28 rounded-full bg-[#e7ebe6] animate-pulse" />
+                          <div className="h-2 w-20 rounded-full bg-[#edf1ec] animate-pulse" />
+                        </div>
+                      </div>
+                      <div className="h-4 w-4 rounded-full bg-[#e7ebe6] animate-pulse" />
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      <div className="h-10 rounded-full bg-[#eef1ec] animate-pulse" />
+                      <div className="h-10 rounded-full bg-[#eef1ec] animate-pulse" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : sections.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-(--vv-border) bg-white/70 px-4 py-6 text-center text-sm text-(--vv-muted)">
+                データを読み込めませんでした。
+              </div>
+            ) : (
+              sections.map((section) => {
               const isOpen = openIds.includes(section.id);
 
               return (
@@ -689,7 +647,8 @@ export default function HomeScreen() {
                   ) : null}
                 </div>
               );
-            })}
+              })
+            )}
           </div>
         </section>
       </div>

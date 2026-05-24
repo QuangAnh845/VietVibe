@@ -15,6 +15,30 @@ type VocabCard = {
   note?: string;
 };
 
+type RawVocabCard = {
+  _id?: string;
+  id?: string;
+  wordVi?: string;
+  word_vi?: string;
+  term?: string;
+  learningUnit?: {
+    titleJa?: string;
+  };
+  tag?: string | null;
+  meaningJa?: string;
+  meaning_ja?: string;
+  exampleVi?: string;
+  example_vi?: string;
+  note?: string | null;
+};
+
+type VocabularyProgressResponse = {
+  success: boolean;
+  viewedCardsCount: number;
+  totalVocabularyCards: number;
+  completed: boolean;
+};
+
 // Backend base URL (can be overridden with NEXT_PUBLIC_BACKEND_URL)
 const DEFAULT_BACKEND =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -51,7 +75,7 @@ async function fetchVocabCards(learningUnitId?: string): Promise<VocabCard[]> {
         try {
           const json = await res.json();
           errorMsg = json?.message || json?.error || errorMsg;
-        } catch (e) {
+        } catch {
           // response.json() failed, use status text
           errorMsg = res.statusText || errorMsg;
         }
@@ -68,7 +92,7 @@ async function fetchVocabCards(learningUnitId?: string): Promise<VocabCard[]> {
       : Array.isArray(json.data)
         ? json.data
         : [];
-    return data.map((c: any) => ({
+    return data.map((c: RawVocabCard) => ({
       id: c.id ?? String(c._id ?? ""),
       term: c.wordVi ?? c.word_vi ?? c.term ?? "",
       reading: c.learningUnit?.titleJa ?? undefined,
@@ -90,10 +114,6 @@ export default function VocabScreen() {
   const learningUnitId = searchParams.get("learningUnitId");
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
-  const [flippedCardIds, setFlippedCardIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [hasMarkedCompletion, setHasMarkedCompletion] = useState(false);
 
   const [cards, setCards] = useState<VocabCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,9 +124,8 @@ export default function VocabScreen() {
     ({ id: "", term: "", meaning: "", example: "" } as VocabCard);
 
   const isLastCard = cards.length > 0 && index >= cards.length - 1;
-  const hasFlippedAll = cards.length > 0 && flippedCardIds.size >= cards.length;
 
-  const markVocabCompletion = () => {
+  const syncLocalVocabularyCompletion = () => {
     if (typeof window === "undefined") return;
 
     try {
@@ -132,91 +151,112 @@ export default function VocabScreen() {
       }
 
       if (progress[lastSelection.sectionId][lastSelection.taskId].vocab) {
-        setHasMarkedCompletion(true);
         return;
       }
 
       progress[lastSelection.sectionId][lastSelection.taskId].vocab = true;
       localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
       window.dispatchEvent(new Event(PROGRESS_EVENT));
-      setHasMarkedCompletion(true);
     } catch (error) {
       console.error("Failed to store vocab completion", error);
     }
   };
 
-  const markCompletionAndExit = () => {
-    if (hasFlippedAll) {
-      markVocabCompletion();
-    }
-
-    router.push("/");
-  };
-
-  const goNext = () => {
-    if (isLastCard) {
-      markCompletionAndExit();
+  const persistViewedCardProgress = async () => {
+    if (!learningUnitId || !card.id || typeof window === "undefined") {
       return;
     }
+
+    const accessToken = localStorage.getItem("auth_token");
+    if (!accessToken) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${DEFAULT_BACKEND}/users/me/progress/vocabulary`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            learningUnitId,
+            vocabularyCardId: card.id,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = (await response.json()) as VocabularyProgressResponse;
+      if (result.completed) {
+        syncLocalVocabularyCompletion();
+      }
+    } catch (error) {
+      console.error("Failed to persist vocabulary progress", error);
+    }
+  };
+
+  const goNext = async () => {
+    await persistViewedCardProgress();
+
+    if (isLastCard) {
+      router.push("/");
+      return;
+    }
+
     setIndex((prev) => Math.min(prev + 1, cards.length - 1));
     setFlipped(false);
   };
 
-  const goPrev = () => {
+  const goPrev = async () => {
+    await persistViewedCardProgress();
+
     setIndex((prev) => Math.max(prev - 1, 0));
     setFlipped(false);
   };
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
-    setError(null);
 
-    fetchVocabCards(learningUnitId ?? undefined)
-      .then((result) => {
+    const loadCards = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const result = await fetchVocabCards(learningUnitId ?? undefined);
         if (!mounted) return;
         setCards(result);
         setIndex(0);
         setFlipped(false);
-        setFlippedCardIds(new Set());
-        setHasMarkedCompletion(false);
-        setLoading(false);
-      })
-      .catch((err: any) => {
+      } catch (error) {
         if (!mounted) return;
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         console.error("useEffect - Vocab fetch error:", errorMsg);
         setError(errorMsg || "Failed to load vocabulary cards");
         setCards([]);
-        setLoading(false);
-      });
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadCards();
 
     return () => {
       mounted = false;
     };
   }, [learningUnitId]);
 
-  useEffect(() => {
-    if (!hasFlippedAll || hasMarkedCompletion) return;
-    markVocabCompletion();
-  }, [hasFlippedAll, hasMarkedCompletion]);
-
   const handleCardFlip = () => {
     if (!card?.id) return;
 
-    setFlipped((prev) => {
-      const nextFlipped = !prev;
-
-      if (nextFlipped) {
-        setFlippedCardIds((prevIds) => {
-          const nextIds = new Set(prevIds);
-          nextIds.add(card.id);
-          return nextIds;
-        });
-      }
-
-      return nextFlipped;
-    });
+    setFlipped((prev) => !prev);
   };
 
   return (
@@ -225,6 +265,11 @@ export default function VocabScreen() {
         <header className="flex items-center justify-between vv-rise-in">
           <Link
             href="/"
+            onClick={async (event) => {
+              event.preventDefault();
+              await persistViewedCardProgress();
+              router.push("/");
+            }}
             className="flex items-center gap-2 text-sm font-semibold text-(--vv-accent-strong)"
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 ring-1 ring-(--vv-ring)">
@@ -369,7 +414,9 @@ export default function VocabScreen() {
           <div className="mt-6 flex items-center justify-between">
             <button
               type="button"
-              onClick={goPrev}
+              onClick={() => {
+                void goPrev();
+              }}
               disabled={index === 0}
               className="inline-flex items-center gap-2 rounded-full bg-[#eef0ec] px-4 py-2 text-xs font-semibold text-(--vv-muted) transition disabled:opacity-50"
             >
@@ -378,7 +425,9 @@ export default function VocabScreen() {
             </button>
             <button
               type="button"
-              onClick={goNext}
+              onClick={() => {
+                void goNext();
+              }}
               className="inline-flex items-center gap-2 rounded-full bg-[#dfe5df] px-4 py-2 text-xs font-semibold text-(--vv-accent-strong) transition"
             >
               {isLastCard ? "完了" : "次へ"}
