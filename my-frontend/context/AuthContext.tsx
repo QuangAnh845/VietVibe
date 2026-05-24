@@ -111,8 +111,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (accessToken) {
         await authService.logout(accessToken).catch(console.error); // Silently fail if server is down
       }
-      clearTokens();
+      
+      // Clean up all authentication data
+      clearTokens(); // Clears access_token, refresh_token, and user data from localStorage
       setUser(null);
+      
+      // Remove any cached data
+      localStorage.removeItem('auth_state');
+      localStorage.removeItem('user_preferences');
+      
+      // Optionally redirect to login (handled by ProtectedRoute)
     } finally {
       setIsLoading(false);
     }
@@ -174,3 +182,5 @@ export const useAuth = () => {
   }
   return context;
 };
+
+export { AuthContext };

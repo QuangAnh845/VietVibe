@@ -25,7 +25,16 @@ type IconName =
 type Section = {
   id: string;
   label: string;
+  subtitle?: string;
   icon: IconName;
+  situations: SituationCard[];
+  tasks: Task[];
+};
+
+type SituationCard = {
+  id: string;
+  title: string;
+  subtitle?: string | null;
   tasks: Task[];
 };
 
@@ -36,7 +45,7 @@ type Place = {
   description?: string | null;
 };
 
-type Situation = {
+type SituationRecord = {
   id: string;
   placeId: string;
   titleVi: string;
@@ -44,7 +53,7 @@ type Situation = {
   description?: string | null;
 };
 
-type LearningUnit = {
+type LearningUnitRecord = {
   id: string;
   situationId: string;
   levelId: string;
@@ -74,11 +83,20 @@ const placeIconMap: Record<string, IconName> = {
   taxi: "taxi",
 };
 
+const normalizeText = (value: string) => value.trim().toLowerCase();
+
+const matchesQuery = (source: string | null | undefined, query: string) => {
+  if (!source) return false;
+  return normalizeText(source).includes(query);
+};
+
 const initialSections: Section[] = [
   {
     id: "super",
     label: "スーパー",
+    subtitle: "Siêu thị",
     icon: "cart",
+    situations: [],
     tasks: [
       {
         id: "ask-price",
@@ -103,7 +121,9 @@ const initialSections: Section[] = [
   {
     id: "restaurant",
     label: "レストラン",
+    subtitle: "Nhà hàng",
     icon: "restaurant",
+    situations: [],
     tasks: [
       {
         id: "order-dish",
@@ -122,7 +142,9 @@ const initialSections: Section[] = [
   {
     id: "hospital",
     label: "病院",
+    subtitle: "Bệnh viện",
     icon: "hospital",
+    situations: [],
     tasks: [
       {
         id: "describe-symptoms",
@@ -141,7 +163,9 @@ const initialSections: Section[] = [
   {
     id: "bus-terminal",
     label: "バスターミナル",
+    subtitle: "Bến xe",
     icon: "bus",
+    situations: [],
     tasks: [
       {
         id: "buy-ticket",
@@ -154,7 +178,9 @@ const initialSections: Section[] = [
   {
     id: "salon",
     label: "美容室",
+    subtitle: "Tiệm tóc",
     icon: "salon",
+    situations: [],
     tasks: [
       {
         id: "book-appointment",
@@ -167,7 +193,9 @@ const initialSections: Section[] = [
   {
     id: "bank",
     label: "銀行",
+    subtitle: "Ngân hàng",
     icon: "bank",
+    situations: [],
     tasks: [
       {
         id: "open-account",
@@ -180,7 +208,9 @@ const initialSections: Section[] = [
   {
     id: "taxi",
     label: "タクシー",
+    subtitle: "Taxi",
     icon: "taxi",
+    situations: [],
     tasks: [],
   },
 ];
@@ -198,7 +228,9 @@ export default function HomeScreen() {
   >("login");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLDivElement | null>(null);
 
   const API_BASE_URL =
     process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -220,6 +252,27 @@ export default function HomeScreen() {
     }
   }, [router]);
 
+  // Handle search dropdown click outside
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        searchRef.current &&
+        !searchRef.current.contains(event.target as Node)
+      ) {
+        setIsSearchOpen(false);
+      }
+    };
+
+    if (isSearchOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+      };
+    }
+  }, [isSearchOpen]);
+
   // Load data from API
   useEffect(() => {
     const loadData = async () => {
@@ -237,29 +290,45 @@ export default function HomeScreen() {
               `${API_BASE_URL}/listening/places/${place.id}/situations`,
             );
             if (!situationsRes.ok) return null;
-            const situations: Situation[] = await situationsRes.json();
+            const situations: SituationRecord[] = await situationsRes.json();
 
-            const tasksBySituation = await Promise.all(
+            const situationsWithTasks = await Promise.all(
               situations.map(async (situation) => {
                 const learningUnitsRes = await fetch(
                   `${API_BASE_URL}/listening/situations/${situation.id}/learning-units`,
                 );
-                if (!learningUnitsRes.ok) return [] as Task[];
+                if (!learningUnitsRes.ok) {
+                  return {
+                    id: situation.id,
+                    title: situation.titleJa,
+                    subtitle: situation.description ?? situation.titleVi,
+                    tasks: [] as Task[],
+                  };
+                }
 
-                const learningUnits: LearningUnit[] =
+                const learningUnits: LearningUnitRecord[] =
                   await learningUnitsRes.json();
 
-                return learningUnits.map((unit) => ({
+                const tasks = learningUnits.map((unit) => ({
                   id: unit.id,
                   title: unit.titleJa,
                   vocab: false,
                   listen: false,
                   learningUnitId: unit.id,
                 }));
+
+                return {
+                  id: situation.id,
+                  title: situation.titleJa,
+                  subtitle: situation.description ?? situation.titleVi,
+                  tasks,
+                };
               }),
             );
 
-            const tasks = tasksBySituation.flat();
+            const tasks = situationsWithTasks.flatMap(
+              (situation) => situation.tasks,
+            );
 
             const placeKey = place.nameVi.toLowerCase().replace(/\s+/g, "-");
             const icon: IconName = Object.keys(placeIconMap).some((key) =>
@@ -275,7 +344,9 @@ export default function HomeScreen() {
             return {
               id: place.id,
               label: place.nameJa,
+              subtitle: place.nameVi || place.description || undefined,
               icon,
+              situations: situationsWithTasks,
               tasks,
             };
           }),
@@ -449,15 +520,48 @@ export default function HomeScreen() {
     if (!normalizedQuery) return [];
 
     return sections.reduce<Section[]>((acc, section) => {
-      const sectionMatch = section.label
-        .toLowerCase()
-        .includes(normalizedQuery);
-      const taskMatch = section.tasks.some((task) =>
-        task.title.toLowerCase().includes(normalizedQuery),
+      const sectionMatch =
+        matchesQuery(section.label, normalizedQuery) ||
+        matchesQuery(section.subtitle, normalizedQuery);
+
+      const matchedSituations = section.situations
+        .map((situation) => {
+          const situationMatch =
+            matchesQuery(situation.title, normalizedQuery) ||
+            matchesQuery(situation.subtitle, normalizedQuery) ||
+            situation.tasks.some((task) =>
+              matchesQuery(task.title, normalizedQuery),
+            );
+
+          if (!sectionMatch && !situationMatch) return null;
+
+          return situation;
+        })
+        .filter((situation): situation is SituationCard => situation !== null);
+
+      // Also include situations if any task matches
+      const situationsWithMatchingTasks = !sectionMatch
+        ? section.situations.filter((situation) =>
+            situation.tasks.some((task) =>
+              matchesQuery(task.title, normalizedQuery),
+            ),
+          )
+        : section.situations;
+
+      const uniqueSituations = Array.from(
+        new Map(
+          [
+            ...(sectionMatch ? section.situations : matchedSituations),
+            ...situationsWithMatchingTasks,
+          ].map((s) => [s.id, s]),
+        ).values(),
       );
 
-      if (sectionMatch || taskMatch) {
-        acc.push(section);
+      if (sectionMatch || uniqueSituations.length > 0) {
+        acc.push({
+          ...section,
+          situations: uniqueSituations,
+        });
       }
 
       return acc;
@@ -538,12 +642,20 @@ export default function HomeScreen() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onFocus={() => setIsSearchOpen(true)}
             placeholder="場所や状況を検索..."
             className="h-12 w-full rounded-2xl border border-transparent bg-white/90 pl-12 pr-4 text-sm text-foreground shadow-sm ring-1 ring-(--vv-ring) transition focus:border-(--vv-accent) focus:outline-none"
           />
-          {normalizedQuery ? (
-            <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-2xl bg-white p-2 shadow-[0_18px_28px_rgba(0,0,0,0.12)] ring-1 ring-(--vv-ring)">
-              {searchSections.length === 0 ? (
+          {normalizedQuery && isSearchOpen ? (
+            <div
+              ref={searchRef}
+              className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_18px_28px_rgba(0,0,0,0.12)] ring-1 ring-(--vv-ring)"
+            >
+              {isLoadingData ? (
+                <div className="rounded-xl border border-dashed border-(--vv-border) px-3 py-8 text-center text-xs text-(--vv-muted)">
+                  読み込み中...
+                </div>
+              ) : searchSections.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-(--vv-border) px-3 py-4 text-center text-xs text-(--vv-muted)">
                   該当する結果が見つかりません。
                 </div>
@@ -552,7 +664,7 @@ export default function HomeScreen() {
                   {searchSections.map((section) => (
                     <div
                       key={section.id}
-                      className="rounded-xl border border-(--vv-border) bg-white/80"
+                      className="rounded-xl border border-(--vv-border) bg-white/80 overflow-hidden"
                     >
                       <button
                         type="button"
@@ -563,21 +675,48 @@ export default function HomeScreen() {
                               : [...prev, section.id],
                           );
                           setQuery("");
+                          setIsSearchOpen(false);
                         }}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2"
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-50 transition"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 items-center justify-center text-(--vv-accent-strong)">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="flex h-8 w-8 items-center justify-center text-(--vv-accent-strong) shrink-0">
                             <Icon name={section.icon} className="h-4 w-4" />
                           </span>
-                          <div className="text-left">
-                            <p className="text-sm font-semibold">
+                          <div className="text-left min-w-0">
+                            <p className="text-sm font-semibold truncate">
                               {section.label}
                             </p>
+                            {section.subtitle ? (
+                              <p className="text-xs text-(--vv-muted) truncate">
+                                {section.subtitle}
+                              </p>
+                            ) : null}
                           </div>
                         </div>
-                        <ChevronIcon className="h-4 w-4 text-(--vv-muted)" />
+                        <span className="shrink-0 rounded-full bg-(--vv-accent-soft) px-2.5 py-1 text-[11px] font-semibold text-(--vv-accent-strong) whitespace-nowrap">
+                          {section.situations.length}
+                        </span>
                       </button>
+                      {section.situations.length > 0 ? (
+                        <div className="border-t border-(--vv-border) bg-gray-50/50 px-3 py-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            {section.situations.slice(0, 5).map((situation) => (
+                              <span
+                                key={situation.id}
+                                className="rounded-full border border-(--vv-border) bg-white px-2 py-1 text-[10px] font-medium text-(--vv-muted)"
+                              >
+                                {situation.title}
+                              </span>
+                            ))}
+                            {section.situations.length > 5 ? (
+                              <span className="rounded-full border border-(--vv-border) bg-white px-2 py-1 text-[10px] font-medium text-(--vv-muted)">
+                                +{section.situations.length - 5}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -628,8 +767,8 @@ export default function HomeScreen() {
                       <div className="text-left">
                         <p className="text-sm font-semibold">{section.label}</p>
                         <p className="text-xs text-(--vv-muted)">
-                          {section.tasks.length > 0
-                            ? `${section.tasks.length} レッスン`
+                          {section.situations.length > 0
+                            ? `${section.situations.length} tình huống · ${section.tasks.length} bài học`
                             : "準備中"}
                         </p>
                       </div>
@@ -643,43 +782,74 @@ export default function HomeScreen() {
 
                   {isOpen ? (
                     <div className="border-t border-(--vv-border) px-4 py-3">
-                      {section.tasks.length === 0 ? (
+                      {section.situations.length === 0 ? (
                         <p className="text-xs text-(--vv-muted)">
                           まもなく追加されます。
                         </p>
                       ) : (
                         <div className="flex flex-col gap-3">
-                          {section.tasks.map((task) => (
+                          {section.situations.map((situation) => (
                             <div
-                              key={task.id}
-                              className="flex items-center justify-between gap-3"
+                              key={situation.id}
+                              className="rounded-2xl border border-(--vv-border) bg-white/85 px-3 py-3"
                             >
-                              <p className="text-sm font-medium text-foreground">
-                                {task.title}
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <ToggleButton
-                                  label="語彙"
-                                  active={task.vocab}
-                                  onClick={() =>
-                                    handleTaskLaunch(
-                                      section.id,
-                                      task.id,
-                                      "vocab",
-                                    )
-                                  }
-                                />
-                                <ToggleButton
-                                  label="聞く"
-                                  active={task.listen}
-                                  onClick={() =>
-                                    handleTaskLaunch(
-                                      section.id,
-                                      task.id,
-                                      "listen",
-                                    )
-                                  }
-                                />
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-foreground">
+                                    {situation.title}
+                                  </p>
+                                  {situation.subtitle ? (
+                                    <p className="mt-1 text-xs text-(--vv-muted)">
+                                      {situation.subtitle}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <span className="shrink-0 rounded-full bg-(--vv-accent-soft) px-2.5 py-1 text-[11px] font-semibold text-(--vv-accent-strong)">
+                                  {situation.tasks.length} bài
+                                </span>
+                              </div>
+
+                              <div className="mt-3 flex flex-col gap-2">
+                                {situation.tasks.length === 0 ? (
+                                  <p className="text-xs text-(--vv-muted)">
+                                    Chưa có bài học.
+                                  </p>
+                                ) : (
+                                  situation.tasks.map((task) => (
+                                    <div
+                                      key={task.id}
+                                      className="flex items-center justify-between gap-3 rounded-xl bg-[#f8faf8] px-3 py-2"
+                                    >
+                                      <p className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                                        {task.title}
+                                      </p>
+                                      <div className="flex items-center gap-2">
+                                        <ToggleButton
+                                          label="語彙"
+                                          active={task.vocab}
+                                          onClick={() =>
+                                            handleTaskLaunch(
+                                              section.id,
+                                              task.id,
+                                              "vocab",
+                                            )
+                                          }
+                                        />
+                                        <ToggleButton
+                                          label="聞く"
+                                          active={task.listen}
+                                          onClick={() =>
+                                            handleTaskLaunch(
+                                              section.id,
+                                              task.id,
+                                              "listen",
+                                            )
+                                          }
+                                        />
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
                               </div>
                             </div>
                           ))}
