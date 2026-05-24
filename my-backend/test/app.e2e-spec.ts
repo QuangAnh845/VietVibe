@@ -23,6 +23,19 @@ describe('AppController (e2e)', () => {
       .expect('Hello World!');
   });
 
+  it('/listening/admin/create (POST) requires auth', () => {
+    return request(app.getHttpServer())
+      .post('/listening/admin/create')
+      .send({
+        learningUnitId: '000000000000000000000000',
+        titleVi: 'Test',
+        titleJa: 'テスト',
+        audioUrl: '/audios/test.mp4',
+        durationSeconds: 10,
+      })
+      .expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

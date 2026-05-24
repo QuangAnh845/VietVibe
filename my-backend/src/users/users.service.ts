@@ -72,4 +72,28 @@ export class UsersService {
 
     return updatedUser;
   }
+
+  async getListeningSettings(userId: string) {
+    const user = await this.userModel.findById(userId).select('listening_settings badges').exec();
+    if (!user) throw new NotFoundException('User not found');
+    return user.listening_settings || {};
+  }
+
+  async updateListeningSettings(userId: string, updateDto: import('./dto/update-listening-settings.dto.js').UpdateListeningSettingsDto) {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new NotFoundException('User not found');
+
+    if (!user.listening_settings) {
+      user.listening_settings = { playback_speed: 1.0, auto_pause: false, environment_sound_id: null, environment_volume: 50 };
+    }
+
+    if (updateDto.playback_speed !== undefined) user.listening_settings.playback_speed = updateDto.playback_speed;
+    if (updateDto.auto_pause !== undefined) user.listening_settings.auto_pause = updateDto.auto_pause;
+    if (updateDto.environment_sound_id !== undefined) user.listening_settings.environment_sound_id = updateDto.environment_sound_id;
+    if (updateDto.environment_volume !== undefined) user.listening_settings.environment_volume = updateDto.environment_volume;
+
+    await user.save();
+    return user.listening_settings;
+  }
 }
+

@@ -111,7 +111,7 @@ export default function DashboardScreen() {
 
   const normalizeText = (value: string) => value.trim().toLowerCase();
   const filterRows = (
-    items: { title: string; meta: string }[],
+    items: { index: string; title: string; meta: string }[],
     query: string,
   ) => {
     const normalized = normalizeText(query);
@@ -121,7 +121,7 @@ export default function DashboardScreen() {
     );
   };
   const sortRows = (
-    items: { title: string; meta: string }[],
+    items: { index: string; title: string; meta: string }[],
     sortValue: SortValue,
   ) => {
     const sorted = [...items].sort((a, b) => {
