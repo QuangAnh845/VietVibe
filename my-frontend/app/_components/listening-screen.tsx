@@ -125,9 +125,12 @@ export default function ListeningScreen() {
 
       if (authData?.accessToken) {
         try {
-          const res = await fetch(`${BACKEND_URL}/users/me/listening-settings`, {
-            headers: { Authorization: `Bearer ${authData.accessToken}` }
-          });
+          const res = await fetch(
+            `${BACKEND_URL}/users/me/listening-settings`,
+            {
+              headers: { Authorization: `Bearer ${authData.accessToken}` },
+            },
+          );
           if (res.ok) {
             const settings = await res.json();
             if (mounted && Object.keys(settings).length > 0) {
@@ -162,7 +165,9 @@ export default function ListeningScreen() {
       }
     };
     void loadSettingsAndOptions();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -335,17 +340,18 @@ export default function ListeningScreen() {
     if (authData?.accessToken) {
       try {
         await fetch(`${BACKEND_URL}/users/me/listening-settings`, {
-          method: 'PUT',
-          headers: { 
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authData.accessToken}` 
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authData.accessToken}`,
           },
           body: JSON.stringify({
             playback_speed: newSpeed === "0.75x" ? 0.75 : 1.0,
             auto_pause: newPlayMode === "study",
-            environment_sound_id: newAmbientSound === "off" ? null : newAmbientSound,
-            environment_volume: newAmbientVolume
-          })
+            environment_sound_id:
+              newAmbientSound === "off" ? null : newAmbientSound,
+            environment_volume: newAmbientVolume,
+          }),
         });
       } catch (e) {
         console.error("Failed to save settings to API", e);
@@ -475,8 +481,12 @@ export default function ListeningScreen() {
   const resolvedAudioSrc =
     currentLineAudioUrl || resolveAudioUrl(lesson?.audioUrl ?? "");
 
-  const selectedAmbientOption = ambientOptions.find((o) => o.id === ambientSound);
-  const ambientAudioSrc = selectedAmbientOption?.audioUrl ? resolveAudioUrl(selectedAmbientOption.audioUrl) : "";
+  const selectedAmbientOption = ambientOptions.find(
+    (o) => o.id === ambientSound,
+  );
+  const ambientAudioSrc = selectedAmbientOption?.audioUrl
+    ? resolveAudioUrl(selectedAmbientOption.audioUrl)
+    : "";
 
   // Synchronize ambient sound with main player state, volume, and selection
   useEffect(() => {
@@ -856,16 +866,18 @@ export default function ListeningScreen() {
   const syncProgressToAPI = async (progressSeconds: number) => {
     if (!lesson?.id) return;
     let authData = null;
-    try { authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}"); } catch (e) {}
+    try {
+      authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
+    } catch (e) {}
     if (authData?.accessToken) {
       try {
         await fetch(`${BACKEND_URL}/situations/${lesson.id}/progress`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authData.accessToken}` 
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authData.accessToken}`,
           },
-          body: JSON.stringify({ progress_seconds: progressSeconds })
+          body: JSON.stringify({ progress_seconds: progressSeconds }),
         });
       } catch (e) {
         console.error("Failed to update progress to API", e);
@@ -877,9 +889,7 @@ export default function ListeningScreen() {
     if (typeof window === "undefined") return;
 
     try {
-      const lastSelectionRaw = localStorage.getItem(
-        LAST_SELECTION_STORAGE_KEY,
-      );
+      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
       if (!lastSelectionRaw) return;
 
       const lastSelection = JSON.parse(lastSelectionRaw) as {
@@ -936,7 +946,7 @@ export default function ListeningScreen() {
   };
 
   return (
-    <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
+    <div className="min-h-screen w-full bg-[#f6f7f3]">
       {isSettingsOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -1106,117 +1116,106 @@ export default function ListeningScreen() {
             onClick={() => updateLastSelectionMode("vocab")}
             className="pb-3 text-(--vv-muted) transition hover:text-(--vv-accent-strong)"
           >
-            語彙
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 ring-1 ring-(--vv-ring)">
+              <ChevronLeftIcon className="h-4 w-4" />
+            </span>
+            ホーム
           </Link>
-          <span className="relative pb-3 text-(--vv-accent-strong)">
-            聞き取り
-            <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
-          </span>
-        </div>
+        </header>
 
-        <div className="flex flex-wrap items-center gap-3 vv-rise-in vv-delay-2">
-          <button
-            type="button"
-            onClick={() => setShowJapanese((prev) => !prev)}
-            aria-pressed={showJapanese}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border)"
-          >
-            {showJapanese ? "日本語" : "日本語を隠す"}
-            <ChevronDownIcon className="h-4 w-4" />
-          </button>
+        <section className="flex flex-col gap-4 rounded-3xl bg-white/70 p-5 shadow-[0_18px_30px_rgba(31,43,39,0.06)] ring-1 ring-(--vv-ring) vv-rise-in vv-delay-1">
+          {resolvedAudioSrc ? (
+            <audio
+              ref={audioRef}
+              src={resolvedAudioSrc}
+              preload="metadata"
+              onTimeUpdate={handleAudioTimeUpdate}
+              onEnded={handleAudioEnded}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              className="hidden"
+            />
+          ) : null}
 
-          {/* Speed Control Buttons */}
-          <div className="flex items-center gap-2 rounded-full bg-white ring-1 ring-(--vv-border) p-1">
-            {speeds.map((item) => {
-              const isActive = item === speed;
-              return (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => handleSpeedChange(item)}
-                  title={
-                    item === "0.75x" ? "通常より25%遅い速度" : "通常の速度"
-                  }
-                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    isActive
-                      ? "bg-(--vv-accent-strong) text-white"
-                      : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
-                  }`}
-                >
-                  {item}
-                </button>
-              );
-            })}
+          {ambientAudioSrc ? (
+            <audio
+              ref={ambientAudioRef}
+              src={ambientAudioSrc}
+              preload="auto"
+              loop
+              className="hidden"
+            />
+          ) : null}
+
+          <div>
+            <p className="text-xs font-semibold text-(--vv-muted)">
+              {lesson?.titleVi ?? "スーパー / レジで支払う"}
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+              聞き取り
+            </h1>
+            <p className="mt-1 text-xs text-(--vv-muted)">
+              {lesson?.titleJa ?? "会話"}
+            </p>
           </div>
 
-          {/* Settings Button */}
-          <button
-            type="button"
-            onClick={openSettings}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
-            aria-label="Settings"
-            title="再生設定を開く"
-          >
-            <SettingsIcon className="h-5 w-5 text-(--vv-muted)" />
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="rounded-3xl bg-white/90 p-4 text-center text-sm text-(--vv-muted) ring-1 ring-(--vv-ring)">
-            読み込み中...
+          <div className="flex items-center gap-6 border-b border-(--vv-border) text-sm font-semibold">
+            <Link
+              href="/vocab"
+              className="pb-3 text-(--vv-muted) transition hover:text-(--vv-accent-strong)"
+            >
+              語彙
+            </Link>
+            <span className="relative pb-3 text-(--vv-accent-strong)">
+              聞き取り
+              <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
+            </span>
           </div>
-        ) : loadError ? (
-          <div className="rounded-3xl bg-red-50 p-4 text-sm ring-1 ring-red-200">
-            <div className="mb-2 font-semibold text-red-700">エラー</div>
-            <div className="mb-3 text-red-600">{loadError}</div>
-            <div className="border-t border-red-200 pt-3 text-xs text-red-600">
-              <p className="mb-2 font-semibold">デバッグ情報:</p>
-              <p>
-                Backend URL: <code className="font-mono">{BACKEND_URL}</code>
-              </p>
-              {learningUnitId && (
-                <p>
-                  Learning Unit ID:{" "}
-                  <code className="font-mono">{learningUnitId}</code>
-                </p>
-              )}
-              <p className="mt-2 font-semibold">トラブルシューティング:</p>
-              <ul className="list-inside list-disc space-y-1">
-                <li>
-                  バックエンドが起動しているか確認:{" "}
-                  <code className="font-mono">npm run start:dev</code>
-                </li>
-                <li>バックエンドがポート3001で起動していることを確認</li>
-                <li>
-                  Swagger ドキュメント:{" "}
-                  <a
-                    href="http://localhost:3001/api/docs"
-                    target="_blank"
-                    className="underline"
-                  >
-                    http://localhost:3001/api/docs
-                  </a>
-                </li>
-                <li>ブラウザのコンソールでエラーを確認</li>
-              </ul>
-            </div>
-          </div>
-        ) : null}
 
-        <div className="rounded-3xl bg-[#cfeee3] p-4 shadow-[0_12px_24px_rgba(35,70,60,0.12)] vv-rise-in vv-delay-3">
-          <div className="flex items-center gap-4">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={handleTogglePlay}
-              disabled={!lesson?.audioUrl}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-(--vv-accent-strong) text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Play"
+              onClick={() => setShowJapanese((prev) => !prev)}
+              aria-pressed={showJapanese}
+              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border)"
             >
-              {isPlaying ? (
-                <PauseIcon className="h-5 w-5" />
-              ) : (
-                <PlayIcon className="h-5 w-5" />
-              )}
+              {showJapanese ? "日本語" : "日本語を隠す"}
+              <ChevronDownIcon className="h-4 w-4" />
+            </button>
+
+            {/* Speed Control Buttons */}
+            <div className="flex items-center gap-2 rounded-full bg-white ring-1 ring-(--vv-border) p-1">
+              {speeds.map((item) => {
+                const isActive = item === speed;
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => handleSpeedChange(item)}
+                    title={
+                      item === "0.75x" ? "通常より25%遅い速度" : "通常の速度"
+                    }
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      isActive
+                        ? "bg-(--vv-accent-strong) text-white"
+                        : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
+                    }`}
+                  >
+                    {item}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Settings Button */}
+            <button
+              type="button"
+              onClick={openSettings}
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
+              aria-label="Settings"
+              title="再生設定を開く"
+            >
+              <SettingsIcon className="h-5 w-5 text-(--vv-muted)" />
             </button>
             <div className="flex-1">
               <div className="h-2 w-full rounded-full bg-white/70">
@@ -1239,48 +1238,47 @@ export default function ListeningScreen() {
               {formatSeconds(Math.floor(totalAudioDuration))}
             </span>
           </div>
-        </div>
 
-        <div className="rounded-3xl bg-white/90 p-4 shadow-[0_12px_24px_rgba(31,43,39,0.08)] ring-1 ring-(--vv-ring)">
-          {currentLine ? (
-            <>
-              <p className="text-sm font-semibold text-foreground">
-                {currentLine.textVi}
+          <div className="rounded-3xl bg-white/90 p-4 shadow-[0_12px_24px_rgba(31,43,39,0.08)] ring-1 ring-(--vv-ring)">
+            {currentLine ? (
+              <>
+                <p className="text-sm font-semibold text-foreground">
+                  {currentLine.textVi}
+                </p>
+                <p className="mt-2 text-xs text-(--vv-muted)">
+                  {showJapanese ? currentLine.textJa : ""}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-(--vv-muted)">
+                会話データがありません。
               </p>
-              <p className="mt-2 text-xs text-(--vv-muted)">
-                {showJapanese ? currentLine.textJa : ""}
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-(--vv-muted)">
-              会話データがありません。
-            </p>
-          )}
-        </div>
+            )}
+          </div>
 
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={goPrev}
-            disabled={currentIndex === 0}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
-          >
-            <ChevronLeftIcon className="h-4 w-4" />
-            前の文
-          </button>
-          <span className="text-xs font-semibold text-(--vv-muted)">
-            {lines.length === 0 ? 0 : currentIndex + 1} / {lines.length}
-          </span>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={lines.length === 0}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
-          >
-            {isLastLine ? "完了" : "次の文"}
-            <ChevronRightIcon className="h-4 w-4" />
-          </button>
-        </div>
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={goPrev}
+              disabled={currentIndex === 0}
+              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
+            >
+              <ChevronLeftIcon className="h-4 w-4" />
+              前の文
+            </button>
+            <span className="text-xs font-semibold text-(--vv-muted)">
+              {lines.length === 0 ? 0 : currentIndex + 1} / {lines.length}
+            </span>
+            <button
+              type="button"
+              onClick={goNext}
+              disabled={lines.length === 0}
+              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
+            >
+              {isLastLine ? "完了" : "次の文"}
+              <ChevronRightIcon className="h-4 w-4" />
+            </button>
+          </div>
 
         <div className="flex flex-col gap-2">
           {lines.map((line, index) => {
@@ -1301,24 +1299,32 @@ export default function ListeningScreen() {
                 <span
                   className={`flex h-8 w-8 items-center justify-center rounded-full ${
                     isActive
-                      ? "bg-(--vv-accent-strong) text-white"
-                      : "bg-(--vv-border) text-(--vv-muted)"
+                      ? "bg-[#cfeee3]"
+                      : "bg-white/80 ring-1 ring-(--vv-border)"
                   }`}
                 >
-                  <PlayIcon className="h-4 w-4" />
-                </span>
-                <span className="flex-1">
-                  <p className="text-sm font-semibold text-foreground">
-                    {line.textVi}
-                  </p>
-                  <p className="mt-1 text-xs text-(--vv-muted)">
-                    {showJapanese ? line.textJa : ""}
-                  </p>
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <span
+                    className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                      isActive
+                        ? "bg-(--vv-accent-strong) text-white"
+                        : "bg-(--vv-border) text-(--vv-muted)"
+                    }`}
+                  >
+                    <PlayIcon className="h-4 w-4" />
+                  </span>
+                  <span className="flex-1">
+                    <p className="text-sm font-semibold text-foreground">
+                      {line.textVi}
+                    </p>
+                    <p className="mt-1 text-xs text-(--vv-muted)">
+                      {showJapanese ? line.textJa : ""}
+                    </p>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </div>
   );
