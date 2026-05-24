@@ -1,10 +1,13 @@
 import { Suspense } from "react";
 import ListeningScreen from "../_components/listening-screen";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 
 export default function ListeningPage() {
   return (
-    <Suspense fallback={null}>
-      <ListeningScreen />
-    </Suspense>
+    <ProtectedRoute>
+      <Suspense fallback={null}>
+        <ListeningScreen />
+      </Suspense>
+    </ProtectedRoute>
   );
 }
