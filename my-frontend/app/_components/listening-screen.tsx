@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 type PlayMode = "study" | "continuous";
@@ -17,6 +17,7 @@ type TranscriptLine = {
   endTime: number;
   textVi: string;
   textJa: string;
+  audioUrl?: string | null;
 };
 
 type ListeningLesson = {
@@ -58,6 +59,8 @@ export default function ListeningScreen() {
   const learningUnitId = searchParams.get("learningUnitId");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ambientAudioRef = useRef<HTMLAudioElement | null>(null);
+  const playbackRequestIdRef = useRef(0);
+  const currentIndexRef = useRef(0);
   // Persisted settings (applied immediately)
   const [speed, setSpeed] = useState<(typeof speeds)[number]>("1.0x");
   const [playMode, setPlayMode] = useState<PlayMode>("study");
@@ -84,6 +87,12 @@ export default function ListeningScreen() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [ambientOptions, setAmbientOptions] = useState<EnvironmentSoundOption[]>(defaultAmbientOptions);
+  const [lineAudioUrls, setLineAudioUrls] = useState<Record<string, string>>({});
+  const [lineDurations, setLineDurations] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
 
   // Load settings from API or localStorage on mount
   useEffect(() => {
@@ -205,6 +214,7 @@ export default function ListeningScreen() {
                   endTime: line.end_time ?? line.endTime ?? 0,
                   textVi: line.text_vi ?? line.textVi ?? "",
                   textJa: line.text_ja ?? line.textJa ?? "",
+                  audioUrl: line.audio_url ?? line.audioUrl ?? null,
                 }))
               : [],
           };
@@ -260,6 +270,7 @@ export default function ListeningScreen() {
                   endTime: line.end_time ?? line.endTime ?? 0,
                   textVi: line.text_vi ?? line.textVi ?? "",
                   textJa: line.text_ja ?? line.textJa ?? "",
+                  audioUrl: line.audio_url ?? line.audioUrl ?? null,
                 }))
               : [],
           };
@@ -269,9 +280,12 @@ export default function ListeningScreen() {
 
         setLesson(selectedLesson);
         setLines(selectedLesson?.transcriptLines ?? []);
+        currentIndexRef.current = 0;
         setCurrentIndex(0);
         setCurrentTime(0);
         setIsPlaying(false);
+        setLineAudioUrls({});
+        setLineDurations({});
 
         if (audioRef.current) {
           audioRef.current.pause();
@@ -283,6 +297,7 @@ export default function ListeningScreen() {
         setLoadError(error?.message || "Failed to load listening lesson");
         setLesson(null);
         setLines([]);
+        currentIndexRef.current = 0;
       } finally {
         if (mounted) {
           setLoading(false);
@@ -346,12 +361,25 @@ export default function ListeningScreen() {
   };
 
   // Handle settings modal save
-  const handleSettingsSave = () => {
+  const handleSettingsSave = async () => {
+    const audio = audioRef.current;
+
     setPlayMode(tempPlayMode);
     setAmbientSound(tempAmbientSound);
     setAmbientVolume(tempAmbientVolume);
     persistSettings(speed, tempPlayMode, tempAmbientSound, tempAmbientVolume);
     setIsSettingsOpen(false);
+
+    playbackRequestIdRef.current += 1;
+    audio?.pause();
+    setIsPlaying(false);
+    currentIndexRef.current = 0;
+    setCurrentIndex(0);
+    setCurrentTime(0);
+
+    requestAnimationFrame(() => {
+      void seekToLine(0, false);
+    });
   };
 
   // Handle settings modal cancel
@@ -376,20 +404,76 @@ export default function ListeningScreen() {
   };
 
   const currentLine = lines[currentIndex];
-  const lessonDuration = lesson?.durationSeconds ?? 0;
   const isLastLine = lines.length > 0 && currentIndex >= lines.length - 1;
 
-  const resolveAudioUrl = (audioUrl: string) => {
+  const vocabHref = learningUnitId
+    ? `/vocab?learningUnitId=${encodeURIComponent(learningUnitId)}`
+    : "/vocab";
+
+  const updateLastSelectionMode = (mode: "vocab" | "listen") => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as {
+        sectionId: string;
+        taskId: string;
+        mode: "vocab" | "listen";
+      };
+
+      localStorage.setItem(
+        LAST_SELECTION_STORAGE_KEY,
+        JSON.stringify({ ...parsed, mode }),
+      );
+    } catch {
+      // Ignore parsing errors
+    }
+  };
+
+  const resolveAudioUrl = useCallback((audioUrl: string) => {
     if (!audioUrl) return "";
     if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
     return audioUrl.startsWith("/")
       ? `${BACKEND_URL}${audioUrl}`
       : `${BACKEND_URL}/${audioUrl}`;
-  };
+  }, []);
+
+  const buildLineAudioCandidates = useCallback((line: TranscriptLine) => {
+    const explicitUrl = line.audioUrl ? [resolveAudioUrl(line.audioUrl)] : [];
+    const fileName = `${encodeURIComponent(line.textVi.trim())}.mp3`;
+    const folderIds = [lesson?.learningUnitId, lesson?.id].filter(Boolean);
+
+    return [
+      ...explicitUrl,
+      ...folderIds.map((folderId) =>
+        resolveAudioUrl(`/audios/${folderId}/${fileName}`),
+      ),
+    ];
+  }, [lesson?.id, lesson?.learningUnitId, resolveAudioUrl]);
+
+  const getFallbackLineDuration = (line: TranscriptLine) =>
+    Math.max(line.endTime - line.startTime, 0);
+
+  const getLineDuration = (line: TranscriptLine) =>
+    lineDurations[line.id] ?? getFallbackLineDuration(line);
+
+  const getLineStartOffset = (index: number) =>
+    lines
+      .slice(0, index)
+      .reduce((total, line) => total + getLineDuration(line), 0);
+
+  const totalAudioDuration = lines.length
+    ? lines.reduce((total, line) => total + getLineDuration(line), 0)
+    : lesson?.durationSeconds ?? 0;
+
+  const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
 
   // Compute resolved audio src once to avoid passing an empty string
   // into the `src` attribute (browsers warn and may re-request the page).
-  const resolvedAudioSrc = resolveAudioUrl(lesson?.audioUrl ?? "");
+  const resolvedAudioSrc =
+    currentLineAudioUrl || resolveAudioUrl(lesson?.audioUrl ?? "");
 
   const selectedAmbientOption = ambientOptions.find((o) => o.id === ambientSound);
   const ambientAudioSrc = selectedAmbientOption?.audioUrl ? resolveAudioUrl(selectedAmbientOption.audioUrl) : "";
@@ -412,6 +496,68 @@ export default function ListeningScreen() {
     }
   }, [isPlaying, ambientSound, ambientVolume, ambientAudioSrc]);
 
+  useEffect(() => {
+    if (lines.length === 0 || !lesson) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const readMetadata = (url: string) =>
+      new Promise<number>((resolve, reject) => {
+        const probe = new Audio();
+        probe.preload = "metadata";
+        probe.onloadedmetadata = () => {
+          if (Number.isFinite(probe.duration) && probe.duration > 0) {
+            resolve(probe.duration);
+          } else {
+            reject(new Error("Invalid audio duration"));
+          }
+        };
+        probe.onerror = () => reject(new Error("Audio metadata unavailable"));
+        probe.src = url;
+      });
+
+    const loadLineAudioMetadata = async () => {
+      const nextUrls: Record<string, string> = {};
+      const nextDurations: Record<string, number> = {};
+
+      for (const line of lines) {
+        const candidates = buildLineAudioCandidates(line);
+        let matched = false;
+
+        for (const candidate of candidates) {
+          try {
+            const duration = await readMetadata(candidate);
+            if (cancelled) return;
+
+            nextUrls[line.id] = candidate;
+            nextDurations[line.id] = duration;
+            matched = true;
+            break;
+          } catch {
+            // Try the next candidate, then fall back to transcript timing.
+          }
+        }
+
+        if (!matched) {
+          nextDurations[line.id] = getFallbackLineDuration(line);
+        }
+      }
+
+      if (!cancelled) {
+        setLineAudioUrls(nextUrls);
+        setLineDurations(nextDurations);
+      }
+    };
+
+    void loadLineAudioMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [buildLineAudioCandidates, lines, lesson]);
+
   const getLineIndexForTime = (time: number) => {
     if (lines.length === 0) return -1;
 
@@ -424,53 +570,155 @@ export default function ListeningScreen() {
     return 0;
   };
 
-  const seekToLine = (index: number, autoPlay = false) => {
-    const targetLine = lines[index];
-    const audio = audioRef.current;
+  const getAudioStartForLine = (line: TranscriptLine) =>
+    lineAudioUrls[line.id] ? 0 : line.startTime;
 
-    if (!targetLine) return;
+  const getAudioEndForLine = (line: TranscriptLine) =>
+    lineAudioUrls[line.id] ? getLineDuration(line) : line.endTime;
 
-    setCurrentIndex(index);
+  const getDisplayTimeForLine = (index: number, audioTime: number) => {
+    const line = lines[index];
+    if (!line) return 0;
 
-    if (audio) {
-      audio.currentTime = targetLine.startTime;
-      setCurrentTime(targetLine.startTime);
+    const lineElapsed = lineAudioUrls[line.id]
+      ? audioTime
+      : audioTime - line.startTime;
 
-      if (autoPlay) {
-        void audio
-          .play()
-          .then(() => setIsPlaying(true))
-          .catch((error) => {
-            console.error("Failed to play audio:", error);
-            setIsPlaying(false);
-          });
+    return Math.min(
+      getLineStartOffset(index) +
+        Math.min(Math.max(lineElapsed, 0), getLineDuration(line)),
+      totalAudioDuration,
+    );
+  };
+
+  const getLineIndexForAudioSource = (source: string) => {
+    if (!source) return -1;
+
+    return lines.findIndex((line) => lineAudioUrls[line.id] === source);
+  };
+
+  const loadAudioSource = (audio: HTMLAudioElement, sourceUrl: string) =>
+    new Promise<void>((resolve, reject) => {
+      if (!sourceUrl || audio.src === sourceUrl) {
+        resolve();
+        return;
+      }
+
+      const cleanup = () => {
+        audio.removeEventListener("loadedmetadata", handleLoaded);
+        audio.removeEventListener("canplay", handleLoaded);
+        audio.removeEventListener("error", handleError);
+      };
+      const handleLoaded = () => {
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        reject(new Error("Audio source failed to load"));
+      };
+
+      audio.pause();
+      audio.addEventListener("loadedmetadata", handleLoaded, { once: true });
+      audio.addEventListener("canplay", handleLoaded, { once: true });
+      audio.addEventListener("error", handleError, { once: true });
+      audio.src = sourceUrl;
+      audio.load();
+    });
+
+  const playLoadedAudio = async (audio: HTMLAudioElement, requestId: number) => {
+    try {
+      await audio.play();
+      if (playbackRequestIdRef.current === requestId) {
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      const errorName = error instanceof DOMException ? error.name : "";
+      if (errorName !== "AbortError") {
+        console.error("Failed to play audio:", error);
+      }
+      if (playbackRequestIdRef.current === requestId) {
+        setIsPlaying(false);
       }
     }
   };
 
-  const handleTogglePlay = () => {
-    const audio = audioRef.current;
+  const waitForNextFrame = () =>
+    new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
 
-    if (!audio || !lesson?.audioUrl) return;
+  const seekToLine = async (index: number, autoPlay = false) => {
+    const targetLine = lines[index];
+    const audio = audioRef.current;
+    const requestId = playbackRequestIdRef.current + 1;
+    playbackRequestIdRef.current = requestId;
+
+    if (!targetLine) return;
+
+    currentIndexRef.current = index;
+    const startTime = getAudioStartForLine(targetLine);
+    setCurrentIndex(index);
+    setCurrentTime(getDisplayTimeForLine(index, startTime));
+
+    if (autoPlay) {
+      await waitForNextFrame();
+    }
+
+    if (playbackRequestIdRef.current !== requestId) return;
+
+    if (audio) {
+      audio.playbackRate = speed === "0.75x" ? 0.75 : 1;
+      const targetAudioUrl =
+        lineAudioUrls[targetLine.id] || resolveAudioUrl(lesson?.audioUrl ?? "");
+
+      await loadAudioSource(audio, targetAudioUrl).catch((error) => {
+        console.error("Failed to load audio:", error);
+      });
+
+      if (playbackRequestIdRef.current !== requestId) return;
+
+      audio.currentTime = startTime;
+
+      if (autoPlay) {
+        await playLoadedAudio(audio, requestId);
+      }
+    }
+  };
+
+  const handleTogglePlay = async () => {
+    const audio = audioRef.current;
+    const requestId = playbackRequestIdRef.current + 1;
+    playbackRequestIdRef.current = requestId;
+
+    if (!audio || !resolvedAudioSrc) return;
 
     if (audio.paused) {
-      if (playMode === "study" && currentLine) {
-        const needsReset = audio.currentTime >= currentLine.endTime - 0.05;
+      if (currentLine) {
+        const lineEnd = getAudioEndForLine(currentLine);
+        const lineStart = getAudioStartForLine(currentLine);
+        const needsReset = audio.currentTime >= lineEnd - 0.05;
         if (needsReset) {
-          audio.currentTime = currentLine.startTime;
-          setCurrentTime(currentLine.startTime);
+          if (isLastLine && playMode === "continuous") {
+            await seekToLine(0, true);
+            return;
+          }
+
+          audio.currentTime = lineStart;
+          setCurrentTime(getDisplayTimeForLine(currentIndex, lineStart));
         }
       }
-      void audio
-        .play()
-        .then(() => setIsPlaying(true))
-        .catch((error) => {
-          console.error("Failed to play audio:", error);
-          setIsPlaying(false);
-        });
+
+      await loadAudioSource(audio, resolvedAudioSrc).catch((error) => {
+        console.error("Failed to load audio:", error);
+      });
+      if (playbackRequestIdRef.current !== requestId) return;
+
+      await playLoadedAudio(audio, requestId);
       return;
     }
 
+    playbackRequestIdRef.current += 1;
     audio.pause();
     setIsPlaying(false);
     syncProgressToAPI(audio.currentTime);
@@ -481,35 +729,128 @@ export default function ListeningScreen() {
     if (!audio) return;
 
     const time = audio.currentTime;
-    if (playMode === "study" && currentLine) {
-      if (time >= currentLine.endTime) {
+    const sourceLineIndex = getLineIndexForAudioSource(audio.src);
+
+    if (sourceLineIndex !== -1) {
+      const sourceLine = lines[sourceLineIndex];
+      const sourceLineEnd = getAudioEndForLine(sourceLine);
+      const sourceLineIsLast = sourceLineIndex >= lines.length - 1;
+
+      if (sourceLineIndex !== currentIndex) {
+        currentIndexRef.current = sourceLineIndex;
+        setCurrentIndex(sourceLineIndex);
+      }
+
+      if (time >= sourceLineEnd) {
+        if (playMode === "continuous" && !sourceLineIsLast) {
+          void seekToLine(sourceLineIndex + 1, true);
+          return;
+        }
+
         audio.pause();
-        audio.currentTime = currentLine.endTime;
-        setCurrentTime(currentLine.endTime);
+        audio.currentTime = sourceLineEnd;
+        setCurrentTime(getDisplayTimeForLine(sourceLineIndex, sourceLineEnd));
         setIsPlaying(false);
         return;
       }
 
-      setCurrentTime(time);
+      setCurrentTime(getDisplayTimeForLine(sourceLineIndex, time));
       return;
     }
 
-    setCurrentTime(time);
+    if (currentLine) {
+      const lineEnd = getAudioEndForLine(currentLine);
+
+      if (time >= lineEnd) {
+        if (
+          playMode === "continuous" &&
+          lineAudioUrls[currentLine.id] &&
+          !isLastLine
+        ) {
+          void seekToLine(currentIndex + 1, true);
+          return;
+        }
+
+        if (playMode === "study" || lineAudioUrls[currentLine.id]) {
+          audio.pause();
+          audio.currentTime = lineEnd;
+          setCurrentTime(getDisplayTimeForLine(currentIndex, lineEnd));
+          setIsPlaying(false);
+          return;
+        }
+      }
+
+      setCurrentTime(getDisplayTimeForLine(currentIndex, time));
+
+      if (playMode === "study" || lineAudioUrls[currentLine.id]) {
+        return;
+      }
+    }
 
     const activeLineIndex = getLineIndexForTime(time);
-    if (activeLineIndex !== -1 && activeLineIndex !== currentIndex) {
-      setCurrentIndex(activeLineIndex);
+    if (activeLineIndex !== -1) {
+      if (activeLineIndex !== currentIndex) {
+        currentIndexRef.current = activeLineIndex;
+        setCurrentIndex(activeLineIndex);
+      }
+      setCurrentTime(getDisplayTimeForLine(activeLineIndex, time));
     }
   };
 
   const handleAudioEnded = () => {
+    const audio = audioRef.current;
+    const sourceLineIndex = audio ? getLineIndexForAudioSource(audio.src) : -1;
+
+    if (sourceLineIndex !== -1) {
+      const sourceLine = lines[sourceLineIndex];
+      const sourceLineIsLast = sourceLineIndex >= lines.length - 1;
+
+      if (playMode === "continuous" && !sourceLineIsLast) {
+        void seekToLine(sourceLineIndex + 1, true);
+        return;
+      }
+
+      setIsPlaying(false);
+      currentIndexRef.current = sourceLineIndex;
+      setCurrentIndex(sourceLineIndex);
+      setCurrentTime(
+        getDisplayTimeForLine(sourceLineIndex, getAudioEndForLine(sourceLine)),
+      );
+
+      if (sourceLineIsLast) {
+        markListeningCompletion();
+        syncProgressToAPI(totalAudioDuration);
+      }
+
+      return;
+    }
+
+    if (currentLine && lineAudioUrls[currentLine.id] && !isLastLine) {
+      if (playMode === "continuous") {
+        void seekToLine(currentIndex + 1, true);
+        return;
+      }
+
+      setIsPlaying(false);
+      setCurrentTime(
+        getDisplayTimeForLine(currentIndex, getAudioEndForLine(currentLine)),
+      );
+      return;
+    }
+
+    if (playMode === "continuous" && !isLastLine) {
+      void seekToLine(currentIndex + 1, true);
+      return;
+    }
+
     setIsPlaying(false);
     markListeningCompletion();
     if (lines.length > 0) {
+      currentIndexRef.current = lines.length - 1;
       setCurrentIndex(lines.length - 1);
-      setCurrentTime(lessonDuration);
+      setCurrentTime(totalAudioDuration);
     }
-    syncProgressToAPI(lessonDuration);
+    syncProgressToAPI(totalAudioDuration);
   };
 
   const syncProgressToAPI = async (progressSeconds: number) => {
@@ -572,18 +913,20 @@ export default function ListeningScreen() {
 
   const markListeningCompletionAndExit = () => {
     markListeningCompletion();
-    syncProgressToAPI(lessonDuration);
+    syncProgressToAPI(totalAudioDuration);
     router.push("/");
   };
 
-  const goPrev = () => seekToLine(Math.max(currentIndex - 1, 0), isPlaying);
+  const goPrev = () => {
+    void seekToLine(Math.max(currentIndex - 1, 0), isPlaying);
+  };
   const goNext = () => {
     if (lines.length === 0) return;
     if (isLastLine) {
       markListeningCompletionAndExit();
       return;
     }
-    seekToLine(Math.min(currentIndex + 1, lines.length - 1), isPlaying);
+    void seekToLine(Math.min(currentIndex + 1, lines.length - 1), isPlaying);
   };
 
   const formatSeconds = (totalSeconds: number) => {
@@ -710,7 +1053,9 @@ export default function ListeningScreen() {
               </button>
               <button
                 type="button"
-                onClick={handleSettingsSave}
+                onClick={() => {
+                  void handleSettingsSave();
+                }}
                 className="flex-1 rounded-full bg-(--vv-accent-strong) px-4 py-3 text-sm font-semibold text-white transition hover:bg-(--vv-accent-strong)/90"
               >
                 保存
@@ -724,7 +1069,6 @@ export default function ListeningScreen() {
         {resolvedAudioSrc ? (
           <audio
             ref={audioRef}
-            src={resolvedAudioSrc}
             preload="metadata"
             onTimeUpdate={handleAudioTimeUpdate}
             onEnded={handleAudioEnded}
@@ -758,7 +1102,8 @@ export default function ListeningScreen() {
 
         <div className="flex items-center gap-6 border-b border-(--vv-border) text-sm font-semibold vv-rise-in vv-delay-1">
           <Link
-            href="/vocab"
+            href={vocabHref}
+            onClick={() => updateLastSelectionMode("vocab")}
             className="pb-3 text-(--vv-muted) transition hover:text-(--vv-accent-strong)"
           >
             語彙
@@ -879,10 +1224,10 @@ export default function ListeningScreen() {
                   className="h-full rounded-full bg-(--vv-accent-strong)"
                   style={{
                     width:
-                      lines.length > 0 && lessonDuration > 0
+                      lines.length > 0 && totalAudioDuration > 0
                         ? `${Math.max(
                             8,
-                            Math.min(100, (currentTime / lessonDuration) * 100),
+                            Math.min(100, (currentTime / totalAudioDuration) * 100),
                           )}%`
                         : "8%",
                   }}
@@ -891,7 +1236,7 @@ export default function ListeningScreen() {
             </div>
             <span className="text-xs font-semibold text-(--vv-accent-strong)">
               {formatSeconds(Math.floor(currentTime))} /{" "}
-              {formatSeconds(lessonDuration)}
+              {formatSeconds(Math.floor(totalAudioDuration))}
             </span>
           </div>
         </div>
@@ -944,7 +1289,9 @@ export default function ListeningScreen() {
               <button
                 key={line.id}
                 type="button"
-                onClick={() => seekToLine(index, isPlaying)}
+                onClick={() => {
+                  void seekToLine(index, isPlaying);
+                }}
                 className={`flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition ${
                   isActive
                     ? "bg-[#cfeee3]"
