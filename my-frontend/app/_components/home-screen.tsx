@@ -9,6 +9,7 @@ type Task = {
   vocab: boolean;
   listen: boolean;
   learningUnitId?: string;
+  meta?: string; // hidden metadata for search (place/situation)
 };
 
 type ToggleField = "vocab" | "listen";
@@ -20,21 +21,16 @@ type IconName =
   | "bus"
   | "salon"
   | "bank"
-  | "taxi";
+  | "taxi"
+  | "pharmacy"
+  | "hotel"
+  | "post";
 
 type Section = {
   id: string;
   label: string;
   subtitle?: string;
   icon: IconName;
-  situations: SituationCard[];
-  tasks: Task[];
-};
-
-type SituationCard = {
-  id: string;
-  title: string;
-  subtitle?: string | null;
   tasks: Task[];
 };
 
@@ -71,16 +67,18 @@ const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
 const PROGRESS_EVENT = "vv-progress-updated";
 
-// Map places to icon names
-const placeIconMap: Record<string, IconName> = {
-  super: "cart",
-  supermarket: "cart",
-  restaurant: "restaurant",
-  hospital: "hospital",
-  bus: "bus",
-  salon: "salon",
-  bank: "bank",
-  taxi: "taxi",
+// Keywords to detect place types (supports vi/ja/en tokens)
+const placeIconKeywords: Record<IconName, string[]> = {
+  cart: ["super", "supermarket", "siêu thị", "スーパー", "スーパ"],
+  restaurant: ["restaurant", "nhà hàng", "レストラン", "レスト"],
+  hospital: ["hospital", "bệnh viện", "病院"],
+  bus: ["bus", "bến xe", "バスターミナル", "バス停", "バス"],
+  salon: ["salon", "tiệm tóc", "美容室"],
+  bank: ["bank", "ngân hàng", "銀行"],
+  taxi: ["taxi", "タクシー"],
+  pharmacy: ["pharmacy", "薬局", "薬", "ドラッグ", "drugstore"],
+  hotel: ["hotel", "ホテル"],
+  post: ["post", "post office", "郵便局", "郵便"],
 };
 
 const normalizeText = (value: string) => value.trim().toLowerCase();
@@ -96,7 +94,6 @@ const initialSections: Section[] = [
     label: "スーパー",
     subtitle: "Siêu thị",
     icon: "cart",
-    situations: [],
     tasks: [
       {
         id: "ask-price",
@@ -123,7 +120,6 @@ const initialSections: Section[] = [
     label: "レストラン",
     subtitle: "Nhà hàng",
     icon: "restaurant",
-    situations: [],
     tasks: [
       {
         id: "order-dish",
@@ -144,7 +140,6 @@ const initialSections: Section[] = [
     label: "病院",
     subtitle: "Bệnh viện",
     icon: "hospital",
-    situations: [],
     tasks: [
       {
         id: "describe-symptoms",
@@ -165,7 +160,6 @@ const initialSections: Section[] = [
     label: "バスターミナル",
     subtitle: "Bến xe",
     icon: "bus",
-    situations: [],
     tasks: [
       {
         id: "buy-ticket",
@@ -180,7 +174,6 @@ const initialSections: Section[] = [
     label: "美容室",
     subtitle: "Tiệm tóc",
     icon: "salon",
-    situations: [],
     tasks: [
       {
         id: "book-appointment",
@@ -195,7 +188,6 @@ const initialSections: Section[] = [
     label: "銀行",
     subtitle: "Ngân hàng",
     icon: "bank",
-    situations: [],
     tasks: [
       {
         id: "open-account",
@@ -210,7 +202,6 @@ const initialSections: Section[] = [
     label: "タクシー",
     subtitle: "Taxi",
     icon: "taxi",
-    situations: [],
     tasks: [],
   },
 ];
@@ -292,61 +283,51 @@ export default function HomeScreen() {
             if (!situationsRes.ok) return null;
             const situations: SituationRecord[] = await situationsRes.json();
 
-            const situationsWithTasks = await Promise.all(
+            // For each situation, fetch learning units and build flat tasks with meta
+            const tasksBySituation = await Promise.all(
               situations.map(async (situation) => {
                 const learningUnitsRes = await fetch(
                   `${API_BASE_URL}/listening/situations/${situation.id}/learning-units`,
                 );
-                if (!learningUnitsRes.ok) {
-                  return {
-                    id: situation.id,
-                    title: situation.titleJa,
-                    subtitle: situation.description ?? situation.titleVi,
-                    tasks: [] as Task[],
-                  };
-                }
+                if (!learningUnitsRes.ok) return [] as Task[];
 
                 const learningUnits: LearningUnitRecord[] =
                   await learningUnitsRes.json();
 
-                const tasks = learningUnits.map((unit) => ({
+                return learningUnits.map((unit) => ({
                   id: unit.id,
                   title: unit.titleJa,
                   vocab: false,
                   listen: false,
                   learningUnitId: unit.id,
+                  meta: `${place.nameVi || place.nameJa} ${situation.titleVi} ${situation.titleJa}`,
                 }));
-
-                return {
-                  id: situation.id,
-                  title: situation.titleJa,
-                  subtitle: situation.description ?? situation.titleVi,
-                  tasks,
-                };
               }),
             );
 
-            const tasks = situationsWithTasks.flatMap(
-              (situation) => situation.tasks,
-            );
+            const tasks = tasksBySituation.flat();
 
-            const placeKey = place.nameVi.toLowerCase().replace(/\s+/g, "-");
-            const icon: IconName = Object.keys(placeIconMap).some((key) =>
-              placeKey.includes(key),
-            )
-              ? placeIconMap[
-                  Object.keys(placeIconMap).find((key) =>
-                    placeKey.includes(key),
-                  ) as string
-                ]
-              : "cart";
+            const nameConcat = `${place.nameVi || ""} ${place.nameJa || ""}`
+              .toLowerCase()
+              .replace(/\s+/g, " ");
+
+            let icon: IconName = "cart";
+            for (const [candidate, keywords] of Object.entries(
+              placeIconKeywords,
+            )) {
+              if (
+                keywords.some((kw) => nameConcat.includes(kw as string))
+              ) {
+                icon = candidate as IconName;
+                break;
+              }
+            }
 
             return {
               id: place.id,
               label: place.nameJa,
               subtitle: place.nameVi || place.description || undefined,
               icon,
-              situations: situationsWithTasks,
               tasks,
             };
           }),
@@ -519,53 +500,16 @@ export default function HomeScreen() {
   const searchSections = useMemo<Section[]>(() => {
     if (!normalizedQuery) return [];
 
-    return sections.reduce<Section[]>((acc, section) => {
-      const sectionMatch =
-        matchesQuery(section.label, normalizedQuery) ||
-        matchesQuery(section.subtitle, normalizedQuery);
+    return sections.filter((section) => {
+      // Match only Japanese fields: `label` (place.nameJa) and `task.title` (unit.titleJa)
+      const sectionMatch = matchesQuery(section.label, normalizedQuery);
 
-      const matchedSituations = section.situations
-        .map((situation) => {
-          const situationMatch =
-            matchesQuery(situation.title, normalizedQuery) ||
-            matchesQuery(situation.subtitle, normalizedQuery) ||
-            situation.tasks.some((task) =>
-              matchesQuery(task.title, normalizedQuery),
-            );
-
-          if (!sectionMatch && !situationMatch) return null;
-
-          return situation;
-        })
-        .filter((situation): situation is SituationCard => situation !== null);
-
-      // Also include situations if any task matches
-      const situationsWithMatchingTasks = !sectionMatch
-        ? section.situations.filter((situation) =>
-            situation.tasks.some((task) =>
-              matchesQuery(task.title, normalizedQuery),
-            ),
-          )
-        : section.situations;
-
-      const uniqueSituations = Array.from(
-        new Map(
-          [
-            ...(sectionMatch ? section.situations : matchedSituations),
-            ...situationsWithMatchingTasks,
-          ].map((s) => [s.id, s]),
-        ).values(),
+      const taskMatch = section.tasks.some((task) =>
+        matchesQuery(task.title, normalizedQuery),
       );
 
-      if (sectionMatch || uniqueSituations.length > 0) {
-        acc.push({
-          ...section,
-          situations: uniqueSituations,
-        });
-      }
-
-      return acc;
-    }, []);
+      return sectionMatch || taskMatch;
+    });
   }, [normalizedQuery, sections]);
 
   const handleTaskLaunch = (
@@ -695,28 +639,10 @@ export default function HomeScreen() {
                           </div>
                         </div>
                         <span className="shrink-0 rounded-full bg-(--vv-accent-soft) px-2.5 py-1 text-[11px] font-semibold text-(--vv-accent-strong) whitespace-nowrap">
-                          {section.situations.length}
+                          {section.tasks.length} レッスン
                         </span>
                       </button>
-                      {section.situations.length > 0 ? (
-                        <div className="border-t border-(--vv-border) bg-gray-50/50 px-3 py-2">
-                          <div className="flex flex-wrap gap-1.5">
-                            {section.situations.slice(0, 5).map((situation) => (
-                              <span
-                                key={situation.id}
-                                className="rounded-full border border-(--vv-border) bg-white px-2 py-1 text-[10px] font-medium text-(--vv-muted)"
-                              >
-                                {situation.title}
-                              </span>
-                            ))}
-                            {section.situations.length > 5 ? (
-                              <span className="rounded-full border border-(--vv-border) bg-white px-2 py-1 text-[10px] font-medium text-(--vv-muted)">
-                                +{section.situations.length - 5}
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : null}
+                      
                     </div>
                   ))}
                 </div>
@@ -767,8 +693,8 @@ export default function HomeScreen() {
                       <div className="text-left">
                         <p className="text-sm font-semibold">{section.label}</p>
                         <p className="text-xs text-(--vv-muted)">
-                          {section.situations.length > 0
-                            ? `${section.situations.length} tình huống · ${section.tasks.length} bài học`
+                          {section.tasks.length > 0
+                            ? `${section.tasks.length} レッスン`
                             : "準備中"}
                         </p>
                       </div>
@@ -782,74 +708,33 @@ export default function HomeScreen() {
 
                   {isOpen ? (
                     <div className="border-t border-(--vv-border) px-4 py-3">
-                      {section.situations.length === 0 ? (
-                        <p className="text-xs text-(--vv-muted)">
-                          まもなく追加されます。
-                        </p>
+                      {section.tasks.length === 0 ? (
+                        <p className="text-xs text-(--vv-muted)">まもなく追加されます。</p>
                       ) : (
                         <div className="flex flex-col gap-3">
-                          {section.situations.map((situation) => (
+                          {section.tasks.map((task) => (
                             <div
-                              key={situation.id}
-                              className="rounded-2xl border border-(--vv-border) bg-white/85 px-3 py-3"
+                              key={task.id}
+                              className="flex items-center justify-between gap-3"
                             >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-foreground">
-                                    {situation.title}
-                                  </p>
-                                  {situation.subtitle ? (
-                                    <p className="mt-1 text-xs text-(--vv-muted)">
-                                      {situation.subtitle}
-                                    </p>
-                                  ) : null}
-                                </div>
-                                <span className="shrink-0 rounded-full bg-(--vv-accent-soft) px-2.5 py-1 text-[11px] font-semibold text-(--vv-accent-strong)">
-                                  {situation.tasks.length} bài
-                                </span>
-                              </div>
-
-                              <div className="mt-3 flex flex-col gap-2">
-                                {situation.tasks.length === 0 ? (
-                                  <p className="text-xs text-(--vv-muted)">
-                                    Chưa có bài học.
-                                  </p>
-                                ) : (
-                                  situation.tasks.map((task) => (
-                                    <div
-                                      key={task.id}
-                                      className="flex items-center justify-between gap-3 rounded-xl bg-[#f8faf8] px-3 py-2"
-                                    >
-                                      <p className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                                        {task.title}
-                                      </p>
-                                      <div className="flex items-center gap-2">
-                                        <ToggleButton
-                                          label="語彙"
-                                          active={task.vocab}
-                                          onClick={() =>
-                                            handleTaskLaunch(
-                                              section.id,
-                                              task.id,
-                                              "vocab",
-                                            )
-                                          }
-                                        />
-                                        <ToggleButton
-                                          label="聞く"
-                                          active={task.listen}
-                                          onClick={() =>
-                                            handleTaskLaunch(
-                                              section.id,
-                                              task.id,
-                                              "listen",
-                                            )
-                                          }
-                                        />
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
+                              <p className="text-sm font-medium text-foreground">
+                                {task.title}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <ToggleButton
+                                  label="語彙"
+                                  active={task.vocab}
+                                  onClick={() =>
+                                    handleTaskLaunch(section.id, task.id, "vocab")
+                                  }
+                                />
+                                <ToggleButton
+                                  label="聞く"
+                                  active={task.listen}
+                                  onClick={() =>
+                                    handleTaskLaunch(section.id, task.id, "listen")
+                                  }
+                                />
                               </div>
                             </div>
                           ))}
@@ -881,7 +766,7 @@ function ToggleButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition ${
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition whitespace-nowrap ${
         active
           ? "bg-(--vv-accent-soft) text-(--vv-accent-strong)"
           : "bg-white text-(--vv-muted) ring-1 ring-(--vv-border)"
@@ -1060,6 +945,58 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
           <circle cx="7" cy="17" r="2" />
           <path d="M9 17h6" />
           <circle cx="17" cy="17" r="2" />
+        </svg>
+      );
+    case "pharmacy":
+      return (
+        <svg
+          className={className}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {/* left half filled to resemble a capsule */}
+          <rect x="3" y="8.5" width="9" height="7" rx="4" fill="currentColor" />
+          {/* outline capsule */}
+          <rect x="3" y="8.5" width="18" height="7" rx="4" fill="none" />
+          <path d="M12 8.5v7" strokeWidth={1.6} />
+        </svg>
+      );
+    case "hotel":
+      return (
+        <svg
+          className={className}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 13h18v5h-2v-2H5v2H3v-5z" />
+          <rect x="6" y="9" width="6" height="3" rx="1" />
+          <path d="M6 18v1M16 18v1" />
+        </svg>
+      );
+    case "post":
+      return (
+        <svg
+          className={className}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="6" width="18" height="12" rx="2" />
+          <path d="M3 8l9 6 9-6" />
         </svg>
       );
     default:
