@@ -1,9 +1,10 @@
-import { Body, Controller, HttpCode, Post, UseGuards, Request } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards, Request, Get } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { RefreshTokenDto, RefreshTokenResponseDto } from './dto/refresh-token.dto.js';
 import { RevokeTokenDto } from './dto/revoke-token.dto.js';
+import { ChangePasswordDto, ChangePasswordResponseDto } from './dto/change-password.dto.js';
 import { LoginService } from './login.service.js';
 import { LoginResponseDto } from './dto/login-response.dto.js';
 import { RevokeTokenResponseDto, RevokeAllTokensResponseDto, LogoutResponseDto } from './dto/revoke-response.dto.js';
@@ -25,8 +26,10 @@ export class LoginController {
     description: 'ログイン成功',
     type: LoginResponseDto,
   })
-  async login(@Body() loginDto: LoginDto): Promise<LoginResponseDto & { refresh_token: string }> {
-    return this.loginService.login(loginDto);
+  async login(@Body() loginDto: LoginDto, @Request() req): Promise<LoginResponseDto & { refresh_token: string }> {
+    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+    const userAgent = req.get('user-agent') || 'unknown';
+    return this.loginService.login(loginDto, ipAddress, userAgent);
   }
 
   @Post('register')
@@ -109,5 +112,38 @@ export class LoginController {
   })
   async logout(@Request() req: any): Promise<LogoutResponseDto> {
     return this.loginService.logout(req.token);
+  }
+
+  @Post('change-password')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
+  @ApiOperation({
+    summary: 'パスワード変更',
+    description: '現在のパスワードを検証後、新しいパスワードに変更。全トークンは無効化される',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'パスワード変更成功',
+    type: ChangePasswordResponseDto,
+  })
+  async changePassword(@Request() req: any, @Body() changePasswordDto: ChangePasswordDto): Promise<ChangePasswordResponseDto> {
+    return this.loginService.changePassword(req.token, changePasswordDto);
+  }
+
+  @Get('audit-history')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access_token')
+  @ApiOperation({
+    summary: 'ユーザーの監査ログ取得',
+    description: 'ユーザーの全認証イベント履歴を取得',
+  })
+  @ApiResponse({
+    status: 200,
+    description: '監査ログ取得成功',
+  })
+  async getAuditHistory(@Request() req: any): Promise<any> {
+    return this.loginService.getAuditHistory(req.token);
   }
 }

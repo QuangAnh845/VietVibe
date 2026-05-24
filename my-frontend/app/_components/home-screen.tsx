@@ -9,6 +9,7 @@ type Task = {
   vocab: boolean;
   listen: boolean;
   learningUnitId?: string;
+  meta?: string; // hidden metadata for search (place/situation)
 };
 
 type ToggleField = "vocab" | "listen";
@@ -20,11 +21,15 @@ type IconName =
   | "bus"
   | "salon"
   | "bank"
-  | "taxi";
+  | "taxi"
+  | "pharmacy"
+  | "hotel"
+  | "post";
 
 type Section = {
   id: string;
   label: string;
+  subtitle?: string;
   icon: IconName;
   tasks: Task[];
 };
@@ -36,7 +41,7 @@ type Place = {
   description?: string | null;
 };
 
-type Situation = {
+type SituationRecord = {
   id: string;
   placeId: string;
   titleVi: string;
@@ -44,7 +49,7 @@ type Situation = {
   description?: string | null;
 };
 
-type LearningUnit = {
+type LearningUnitRecord = {
   id: string;
   situationId: string;
   levelId: string;
@@ -75,16 +80,25 @@ const PROGRESS_STORAGE_KEY = "vv-task-progress";
 const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
 const PROGRESS_EVENT = "vv-progress-updated";
 
-// Map places to icon names
-const placeIconMap: Record<string, IconName> = {
-  super: "cart",
-  supermarket: "cart",
-  restaurant: "restaurant",
-  hospital: "hospital",
-  bus: "bus",
-  salon: "salon",
-  bank: "bank",
-  taxi: "taxi",
+// Keywords to detect place types (supports vi/ja/en tokens)
+const placeIconKeywords: Record<IconName, string[]> = {
+  cart: ["super", "supermarket", "siêu thị", "スーパー", "スーパ"],
+  restaurant: ["restaurant", "nhà hàng", "レストラン", "レスト"],
+  hospital: ["hospital", "bệnh viện", "病院"],
+  bus: ["bus", "bến xe", "バスターミナル", "バス停", "バス"],
+  salon: ["salon", "tiệm tóc", "美容室"],
+  bank: ["bank", "ngân hàng", "銀行"],
+  taxi: ["taxi", "タクシー"],
+  pharmacy: ["pharmacy", "薬局", "薬", "ドラッグ", "drugstore"],
+  hotel: ["hotel", "ホテル"],
+  post: ["post", "post office", "郵便局", "郵便"],
+};
+
+const normalizeText = (value: string) => value.trim().toLowerCase();
+
+const matchesQuery = (source: string | null | undefined, query: string) => {
+  if (!source) return false;
+  return normalizeText(source).includes(query);
 };
 
 export default function HomeScreen() {
@@ -414,20 +428,16 @@ export default function HomeScreen() {
   const searchSections = useMemo<Section[]>(() => {
     if (!normalizedQuery) return [];
 
-    return sections.reduce<Section[]>((acc, section) => {
-      const sectionMatch = section.label
-        .toLowerCase()
-        .includes(normalizedQuery);
+    return sections.filter((section) => {
+      // Match only Japanese fields: `label` (place.nameJa) and `task.title` (unit.titleJa)
+      const sectionMatch = matchesQuery(section.label, normalizedQuery);
+
       const taskMatch = section.tasks.some((task) =>
-        task.title.toLowerCase().includes(normalizedQuery),
+        matchesQuery(task.title, normalizedQuery),
       );
 
-      if (sectionMatch || taskMatch) {
-        acc.push(section);
-      }
-
-      return acc;
-    }, []);
+      return sectionMatch || taskMatch;
+    });
   }, [normalizedQuery, sections]);
 
   const handleTaskLaunch = (
@@ -529,6 +539,62 @@ export default function HomeScreen() {
     }
   };
 
+  const handleTaskOpen = (sectionId: string, taskId: string) => {
+    let mode: ToggleField = "vocab";
+
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as {
+            sectionId: string;
+            taskId: string;
+            mode: ToggleField;
+          };
+
+          if (parsed.sectionId === sectionId && parsed.taskId === taskId) {
+            mode = parsed.mode;
+          }
+        }
+      } catch {
+        // Ignore parsing errors
+      }
+    }
+
+    handleTaskLaunch(sectionId, taskId, mode);
+  };
+
+  const handleBadgeToggle = (
+    sectionId: string,
+    taskId: string,
+    field: ToggleField,
+  ) => {
+    if (typeof window === "undefined") return;
+
+    const currentValue =
+      sections
+        .find((section) => section.id === sectionId)
+        ?.tasks.find((task) => task.id === taskId)?.[field] ?? false;
+
+    try {
+      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
+
+      if (!progress[sectionId]) {
+        progress[sectionId] = {};
+      }
+      if (!progress[sectionId][taskId]) {
+        progress[sectionId][taskId] = {};
+      }
+
+      progress[sectionId][taskId][field] = !currentValue;
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+      window.dispatchEvent(new Event(PROGRESS_EVENT));
+    } catch (error) {
+      console.error("Failed to update progress", error);
+    }
+  };
+
   return (
     <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
       {showNotification && (
@@ -580,12 +646,20 @@ export default function HomeScreen() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onFocus={() => setIsSearchOpen(true)}
             placeholder="場所や状況を検索..."
             className="h-12 w-full rounded-2xl border border-transparent bg-white/90 pl-12 pr-4 text-sm text-foreground shadow-sm ring-1 ring-(--vv-ring) transition focus:border-(--vv-accent) focus:outline-none"
           />
-          {normalizedQuery ? (
-            <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-2xl bg-white p-2 shadow-[0_18px_28px_rgba(0,0,0,0.12)] ring-1 ring-(--vv-ring)">
-              {searchSections.length === 0 ? (
+          {normalizedQuery && isSearchOpen ? (
+            <div
+              ref={searchRef}
+              className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_18px_28px_rgba(0,0,0,0.12)] ring-1 ring-(--vv-ring)"
+            >
+              {isLoadingData ? (
+                <div className="rounded-xl border border-dashed border-(--vv-border) px-3 py-8 text-center text-xs text-(--vv-muted)">
+                  読み込み中...
+                </div>
+              ) : searchSections.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-(--vv-border) px-3 py-4 text-center text-xs text-(--vv-muted)">
                   該当する結果が見つかりません。
                 </div>
@@ -594,28 +668,37 @@ export default function HomeScreen() {
                   {searchSections.map((section) => (
                     <div
                       key={section.id}
-                      className="rounded-xl border border-(--vv-border) bg-white/80"
+                      className="rounded-xl border border-(--vv-border) bg-white/80 overflow-hidden"
                     >
                       <button
                         type="button"
                         onClick={() => {
                           handleToggleSection(section.id);
                           setQuery("");
+                          setIsSearchOpen(false);
                         }}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2"
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-50 transition"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 items-center justify-center text-(--vv-accent-strong)">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="flex h-8 w-8 items-center justify-center text-(--vv-accent-strong) shrink-0">
                             <Icon name={section.icon} className="h-4 w-4" />
                           </span>
-                          <div className="text-left">
-                            <p className="text-sm font-semibold">
+                          <div className="text-left min-w-0">
+                            <p className="text-sm font-semibold truncate">
                               {section.label}
                             </p>
+                            {section.subtitle ? (
+                              <p className="text-xs text-(--vv-muted) truncate">
+                                {section.subtitle}
+                              </p>
+                            ) : null}
                           </div>
                         </div>
-                        <ChevronIcon className="h-4 w-4 text-(--vv-muted)" />
+                        <span className="shrink-0 rounded-full bg-(--vv-accent-soft) px-2.5 py-1 text-[11px] font-semibold text-(--vv-accent-strong) whitespace-nowrap">
+                          {section.tasks.length} レッスン
+                        </span>
                       </button>
+                      
                     </div>
                   ))}
                 </div>
@@ -735,7 +818,7 @@ export default function HomeScreen() {
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    handleTaskLaunch(
+                                    handleBadgeToggle(
                                       section.id,
                                       task.id,
                                       "listen",
@@ -800,7 +883,7 @@ function ToggleButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition ${
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition whitespace-nowrap ${
         active
           ? "bg-(--vv-accent-soft) text-(--vv-accent-strong)"
           : "bg-white text-(--vv-muted) ring-1 ring-(--vv-border)"
@@ -979,6 +1062,58 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
           <circle cx="7" cy="17" r="2" />
           <path d="M9 17h6" />
           <circle cx="17" cy="17" r="2" />
+        </svg>
+      );
+    case "pharmacy":
+      return (
+        <svg
+          className={className}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {/* left half filled to resemble a capsule */}
+          <rect x="3" y="8.5" width="9" height="7" rx="4" fill="currentColor" />
+          {/* outline capsule */}
+          <rect x="3" y="8.5" width="18" height="7" rx="4" fill="none" />
+          <path d="M12 8.5v7" strokeWidth={1.6} />
+        </svg>
+      );
+    case "hotel":
+      return (
+        <svg
+          className={className}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 13h18v5h-2v-2H5v2H3v-5z" />
+          <rect x="6" y="9" width="6" height="3" rx="1" />
+          <path d="M6 18v1M16 18v1" />
+        </svg>
+      );
+    case "post":
+      return (
+        <svg
+          className={className}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="6" width="18" height="12" rx="2" />
+          <path d="M3 8l9 6 9-6" />
         </svg>
       );
     default:
