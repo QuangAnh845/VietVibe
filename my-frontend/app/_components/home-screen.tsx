@@ -581,9 +581,7 @@ export default function HomeScreen() {
     }
 
     const section = sections.find((item) => item.id === sectionId);
-    const task = section?.situations
-      .flatMap((situation) => situation.tasks)
-      .find((item) => item.id === taskId);
+    const task = section?.tasks.find((item) => item.id === taskId);
     const query = task?.learningUnitId
       ? `?learningUnitId=${encodeURIComponent(task.learningUnitId)}`
       : "";
@@ -591,63 +589,6 @@ export default function HomeScreen() {
     router.push(
       `${field === "vocab" ? "/vocab" : "/listening"}${query}`,
     );
-  };
-
-  const handleTaskOpen = (sectionId: string, taskId: string) => {
-    let mode: ToggleField = "vocab";
-
-    if (typeof window !== "undefined") {
-      try {
-        const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as {
-            sectionId: string;
-            taskId: string;
-            mode: ToggleField;
-          };
-
-          if (parsed.sectionId === sectionId && parsed.taskId === taskId) {
-            mode = parsed.mode;
-          }
-        }
-      } catch {
-        // Ignore parsing errors
-      }
-    }
-
-    handleTaskLaunch(sectionId, taskId, mode);
-  };
-
-  const handleBadgeToggle = (
-    sectionId: string,
-    taskId: string,
-    field: ToggleField,
-  ) => {
-    if (typeof window === "undefined") return;
-
-    const currentValue =
-      sections
-        .find((section) => section.id === sectionId)
-        ?.situations.flatMap((situation) => situation.tasks)
-        .find((task) => task.id === taskId)?.[field] ?? false;
-
-    try {
-      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      const progress = stored ? (JSON.parse(stored) as TaskProgress) : {};
-
-      if (!progress[sectionId]) {
-        progress[sectionId] = {};
-      }
-      if (!progress[sectionId][taskId]) {
-        progress[sectionId][taskId] = {};
-      }
-
-      progress[sectionId][taskId][field] = !currentValue;
-      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
-      window.dispatchEvent(new Event(PROGRESS_EVENT));
-    } catch (error) {
-      console.error("Failed to update progress", error);
-    }
   };
 
   return (
@@ -879,21 +820,15 @@ export default function HomeScreen() {
                                       key={task.id}
                                       className="flex items-center justify-between gap-3 rounded-xl bg-[#f8faf8] px-3 py-2"
                                     >
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleTaskOpen(section.id, task.id)
-                                        }
-                                        className="min-w-0 flex-1 text-left text-sm font-medium text-foreground"
-                                      >
+                                      <p className="min-w-0 flex-1 text-sm font-medium text-foreground">
                                         {task.title}
-                                      </button>
+                                      </p>
                                       <div className="flex items-center gap-2">
                                         <ToggleButton
                                           label="語彙"
                                           active={task.vocab}
                                           onClick={() =>
-                                            handleBadgeToggle(
+                                            handleTaskLaunch(
                                               section.id,
                                               task.id,
                                               "vocab",
@@ -904,7 +839,7 @@ export default function HomeScreen() {
                                           label="聞く"
                                           active={task.listen}
                                           onClick={() =>
-                                            handleBadgeToggle(
+                                            handleTaskLaunch(
                                               section.id,
                                               task.id,
                                               "listen",
