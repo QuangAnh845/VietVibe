@@ -79,6 +79,43 @@ export class ListeningService {
     return situations.map((situation) => this.mapSituation(situation));
   }
 
+  async getPlaceFull(placeId: string) {
+    const placeObjectId = this.toObjectId(placeId);
+    const place = await Place.findById(placeObjectId);
+    if (!place) {
+      throw new NotFoundException('Không tìm thấy địa điểm.');
+    }
+
+    const situations = await Situation.find({ place_id: placeObjectId }).sort({
+      created_at: 1,
+    });
+
+    const situationsWithUnits = await Promise.all(
+      situations.map(async (situation) => {
+        const learningUnits = await LearningUnit.find({
+          situation_id: situation._id,
+        }).sort({ created_at: 1 });
+
+        const learningUnitsWithLevel = await Promise.all(
+          learningUnits.map(async (unit) => {
+            const level = await Level.findById(unit.level_id);
+            return this.mapLearningUnit(unit, level);
+          }),
+        );
+
+        return {
+          ...this.mapSituation(situation),
+          learningUnits: learningUnitsWithLevel,
+        };
+      }),
+    );
+
+    return {
+      ...this.mapPlace(place),
+      situations: situationsWithUnits,
+    };
+  }
+
   async getLearningUnitsBySituationId(situationId: string) {
     const situationObjectId = this.toObjectId(situationId);
     const situation = await Situation.findById(situationObjectId);

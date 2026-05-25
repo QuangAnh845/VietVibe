@@ -53,6 +53,14 @@ type LearningUnit = {
   description?: string | null;
 };
 
+type SituationFull = Situation & {
+  learningUnits: LearningUnit[];
+};
+
+type PlaceFull = Place & {
+  situations: SituationFull[];
+};
+
 type OverallProgressResponse = {
   total_checked_vocab?: number;
   total_checked_listening?: number;
@@ -246,39 +254,28 @@ export default function HomeScreen() {
     loadData();
   }, [API_BASE_URL]);
 
-  // Fetch situations + learning-units for a single place when opening it
+  // Fetch place hierarchy (situations + learning units) when opening it
   const fetchPlaceDetails = async (placeId: string) => {
     // mark this place as loading so UI can show a spinner/skeleton
     setLoadingPlaceIds((prev) =>
       prev.includes(placeId) ? prev : [...prev, placeId],
     );
     try {
-      const situationsRes = await fetch(
-        `${API_BASE_URL}/listening/places/${placeId}/situations`,
+      const placeRes = await fetch(
+        `${API_BASE_URL}/listening/places/${placeId}/full`,
       );
-      if (!situationsRes.ok) return;
-      const situations: Situation[] = await situationsRes.json();
+      if (!placeRes.ok) return;
+      const placeFull: PlaceFull = await placeRes.json();
 
-      const tasksBySituation = await Promise.all(
-        situations.map(async (situation) => {
-          const learningUnitsRes = await fetch(
-            `${API_BASE_URL}/listening/situations/${situation.id}/learning-units`,
-          );
-          if (!learningUnitsRes.ok) return [] as Task[];
-
-          const learningUnits: LearningUnit[] = await learningUnitsRes.json();
-
-          return learningUnits.map((unit) => ({
-            id: unit.id,
-            title: unit.titleJa,
-            vocab: false,
-            listen: false,
-            learningUnitId: unit.id,
-          }));
-        }),
+      const tasks = placeFull.situations.flatMap((situation) =>
+        situation.learningUnits.map((unit) => ({
+          id: unit.id,
+          title: unit.titleJa,
+          vocab: false,
+          listen: false,
+          learningUnitId: unit.id,
+        })),
       );
-
-      const tasks = tasksBySituation.flat();
 
       // DB is the source of truth for toggle status
       const mergedTasks = tasks.map((task) => {

@@ -173,6 +173,15 @@ export class ListeningController {
     return this.listeningService.getAllPlaces();
   }
 
+  @Get('places/:placeId/full')
+  @ApiOperation({ summary: 'Get place with situations and learning units' })
+  @ApiParam({ name: 'placeId', description: 'Place id' })
+  @ApiOkResponse({ description: 'Place hierarchy' })
+  @ApiNotFoundResponse({ description: 'Place not found' })
+  getPlaceFull(@Param('placeId') placeId: string) {
+    return this.listeningService.getPlaceFull(placeId);
+  }
+
   @Get('places/:placeId/situations')
   @ApiOperation({ summary: 'Get situations by place id' })
   @ApiParam({ name: 'placeId', description: 'Place id' })
