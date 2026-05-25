@@ -291,7 +291,9 @@ export class ListeningService {
   }
 
   async createLearningUnit(createDto: CreateLearningUnitDto) {
-    const situation = await Situation.findById(this.toObjectId(createDto.situationId));
+    const situation = await Situation.findById(
+      this.toObjectId(createDto.situationId),
+    );
     if (!situation) {
       throw new NotFoundException('Không tìm thấy tình huống.');
     }
@@ -306,7 +308,9 @@ export class ListeningService {
       level_id: createDto.levelId,
     });
     if (existingUnit) {
-      throw new BadRequestException('Learning unit đã tồn tại cho tình huống và level này.');
+      throw new BadRequestException(
+        'Learning unit đã tồn tại cho tình huống và level này.',
+      );
     }
 
     const learningUnit = await LearningUnit.create({
@@ -327,11 +331,14 @@ export class ListeningService {
       throw new NotFoundException('Không tìm thấy learning unit để cập nhật.');
     }
 
-    const nextSituationId = updateDto.situationId ?? String(learningUnit.situation_id);
+    const nextSituationId =
+      updateDto.situationId ?? String(learningUnit.situation_id);
     const nextLevelId = updateDto.levelId ?? String(learningUnit.level_id);
 
     if (updateDto.situationId) {
-      const situation = await Situation.findById(this.toObjectId(updateDto.situationId));
+      const situation = await Situation.findById(
+        this.toObjectId(updateDto.situationId),
+      );
       if (!situation) {
         throw new NotFoundException('Không tìm thấy tình huống.');
       }
@@ -350,7 +357,9 @@ export class ListeningService {
       level_id: nextLevelId,
     });
     if (duplicate) {
-      throw new BadRequestException('Learning unit đã tồn tại cho tình huống và level này.');
+      throw new BadRequestException(
+        'Learning unit đã tồn tại cho tình huống và level này.',
+      );
     }
 
     const updatePayload: Record<string, unknown> = {};
@@ -535,7 +544,11 @@ export class ListeningService {
     );
   }
 
-  async startListeningSession(id: string, userIdString: string, startDto: StartListeningSessionDto) {
+  async startListeningSession(
+    id: string,
+    userIdString: string,
+    startDto: StartListeningSessionDto,
+  ) {
     const lesson = await this.findLessonOrThrow(id);
     const userId = this.toObjectId(userIdString);
     await this.findUserOrThrow(userId);
@@ -709,7 +722,9 @@ export class ListeningService {
     }
 
     if (userIdString && String(session.user_id) !== userIdString) {
-      throw new ForbiddenException('Bạn không có quyền truy cập phiên nghe này.');
+      throw new ForbiddenException(
+        'Bạn không có quyền truy cập phiên nghe này.',
+      );
     }
 
     return session;
@@ -1048,7 +1063,9 @@ export class ListeningService {
 
     await TranscriptLine.deleteMany({ lesson_id: { $in: lessonIds } });
     await ListeningSession.deleteMany({ lesson_id: { $in: lessonIds } });
-    await UserProgress.deleteMany({ learning_unit_id: { $in: learningUnitIds } });
+    await UserProgress.deleteMany({
+      learning_unit_id: { $in: learningUnitIds },
+    });
     await ListeningLesson.deleteMany({
       learning_unit_id: { $in: learningUnitIds },
     });

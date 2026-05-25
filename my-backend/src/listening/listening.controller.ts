@@ -108,7 +108,10 @@ export class ListeningController {
   @ApiOperation({ summary: '[ADMIN] Update a situation' })
   @ApiParam({ name: 'id', description: 'Situation id' })
   @ApiOkResponse({ description: 'Situation updated successfully' })
-  updateSituation(@Param('id') id: string, @Body() updateDto: UpdateSituationDto) {
+  updateSituation(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateSituationDto,
+  ) {
     return this.listeningService.updateSituation(id, updateDto);
   }
 
@@ -151,7 +154,10 @@ export class ListeningController {
   @ApiOperation({ summary: '[ADMIN] Update a learning unit' })
   @ApiParam({ name: 'id', description: 'Learning unit id' })
   @ApiOkResponse({ description: 'Learning unit updated successfully' })
-  updateLearningUnit(@Param('id') id: string, @Body() updateDto: UpdateLearningUnitDto) {
+  updateLearningUnit(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateLearningUnitDto,
+  ) {
     return this.listeningService.updateLearningUnit(id, updateDto);
   }
 
@@ -229,8 +235,14 @@ export class ListeningController {
   @ApiParam({ name: 'sessionId', description: 'Listening session id' })
   @ApiOkResponse({ description: 'Completed listening session state' })
   @ApiNotFoundResponse({ description: 'Listening session not found' })
-  completeListeningSession(@Param('sessionId') sessionId: string, @Request() req: any) {
-    return this.listeningService.completeListeningSession(sessionId, req.user.userId);
+  completeListeningSession(
+    @Param('sessionId') sessionId: string,
+    @Request() req: any,
+  ) {
+    return this.listeningService.completeListeningSession(
+      sessionId,
+      req.user.userId,
+    );
   }
 
   @Get('sessions/:sessionId')
@@ -242,8 +254,14 @@ export class ListeningController {
   @ApiParam({ name: 'sessionId', description: 'Listening session id' })
   @ApiOkResponse({ description: 'Listening session state' })
   @ApiNotFoundResponse({ description: 'Listening session not found' })
-  getListeningSessionById(@Param('sessionId') sessionId: string, @Request() req: any) {
-    return this.listeningService.getListeningSessionById(sessionId, req.user.userId);
+  getListeningSessionById(
+    @Param('sessionId') sessionId: string,
+    @Request() req: any,
+  ) {
+    return this.listeningService.getListeningSessionById(
+      sessionId,
+      req.user.userId,
+    );
   }
 
   @Patch('sessions/:sessionId')
@@ -258,7 +276,11 @@ export class ListeningController {
     @Body() updateDto: UpdateListeningSessionDto,
     @Request() req: any,
   ) {
-    return this.listeningService.updateListeningSession(sessionId, req.user.userId, updateDto);
+    return this.listeningService.updateListeningSession(
+      sessionId,
+      req.user.userId,
+      updateDto,
+    );
   }
 
   @Get(':id/audio-processing')
@@ -288,10 +310,7 @@ export class ListeningController {
   @ApiParam({ name: 'id', description: 'Listening lesson id' })
   @ApiOkResponse({ description: 'Latest listening session state' })
   @ApiNotFoundResponse({ description: 'Listening session not found' })
-  getLatestListeningSession(
-    @Param('id') id: string,
-    @Request() req: any,
-  ) {
+  getLatestListeningSession(@Param('id') id: string, @Request() req: any) {
     return this.listeningService.getLatestListeningSession(id, req.user.userId);
   }
 
@@ -311,7 +330,11 @@ export class ListeningController {
     @Body() startDto: StartListeningSessionDto,
     @Request() req: any,
   ) {
-    return this.listeningService.startListeningSession(id, req.user.userId, startDto);
+    return this.listeningService.startListeningSession(
+      id,
+      req.user.userId,
+      startDto,
+    );
   }
 
   @Get(':id')
