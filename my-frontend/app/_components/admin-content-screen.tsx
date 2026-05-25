@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { apiCall } from "@/lib/api";
+import { AutoSaveIndicator } from "./auto-save-indicator";
+import { useAdminContentDraftWorkflow } from "../hooks/use-admin-content-draft-workflow";
 import AdminSidebar from "./admin-sidebar";
 
 type Status = "published" | "edited" | "draft";
@@ -37,6 +39,18 @@ type ScriptDraft = {
   vi: string;
   jp: string;
   timestamp: string;
+};
+
+type ListeningPlaceResponse = {
+  id: string;
+  nameVi?: string;
+  nameJa?: string;
+};
+
+type ListeningSituationResponse = {
+  id: string;
+  titleVi?: string;
+  titleJa?: string;
 };
 
 const initialLocations: Location[] = [
@@ -95,7 +109,7 @@ const initialLocations: Location[] = [
   },
 ];
 
-const listeningRows = [
+const initialListeningRows = [
   {
     index: "1",
     vi: "Xin chào, tôi cần thanh toán.",
@@ -172,6 +186,7 @@ export default function AdminContentScreen() {
     jp: "",
     timestamp: "0:00",
   });
+  const [listeningRows, setListeningRows] = useState(initialListeningRows);
   const [isVocabImportOpen, setIsVocabImportOpen] = useState(false);
   const [vocabRows, setVocabRows] = useState(() => [
     {
@@ -230,6 +245,7 @@ export default function AdminContentScreen() {
   const [vocabToEditIndex, setVocabToEditIndex] = useState<string | null>(null);
   const [deleteVocabIndex, setDeleteVocabIndex] = useState<string | null>(null);
   const [vocabToast, setVocabToast] = useState<string | null>(null);
+  const draftWorkflow = useAdminContentDraftWorkflow({ delay: 2000 });
 
   const activeLocation = useMemo(() => {
     if (!selectedUnit) return null;
@@ -264,14 +280,55 @@ export default function AdminContentScreen() {
   }, [ambientQuery]);
 
   useEffect(() => {
+    if (!activeUnit || !activeLocation) {
+      return;
+    }
+
+    draftWorkflow.setDraft((currentDraft) => ({
+      ...currentDraft,
+      contentId: `admin-content-${activeUnit.id}`,
+      status: activeUnit.status === "published" ? "PUBLISHED" : "DRAFT",
+      placeId: activeLocation.id,
+      placeNameVi: activeLocation.label,
+      placeNameJa: activeLocation.label,
+      situationId: activeUnit.id,
+      situationTitleVi: activeUnit.title,
+      situationTitleJa: activeUnit.title,
+      titleVi: activeUnit.title,
+      titleJa: activeUnit.title,
+      description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
+      vocabCards: vocabRows.map((row) => ({
+        id: row.index,
+        term: row.term,
+        type: row.type,
+        meaning: row.meaning,
+        example: row.example,
+      })),
+      listening: {
+        titleVi: activeUnit.title,
+        titleJa: activeUnit.title,
+        audioUrl: "/audios/admin-demo.mp3",
+        durationSeconds: 68,
+        description: `Bài nghe cho tình huống ${activeUnit.title}.`,
+        transcriptLines: listeningRows.map((row) => ({
+          id: row.index,
+          vi: row.vi,
+          jp: row.jp,
+          timestamp: row.timestamp,
+        })),
+      },
+    }));
+  }, [activeLocation, activeUnit, listeningRows, vocabRows]);
+
+  useEffect(() => {
     let isMounted = true;
 
     const loadContent = async () => {
       try {
-        const places = await apiCall("/listening/places");
+        const places = await apiCall<ListeningPlaceResponse[]>("/listening/places");
         const nextLocations = await Promise.all(
-          places.map(async (place: any) => {
-            const situations = await apiCall(
+          places.map(async (place) => {
+            const situations = await apiCall<ListeningSituationResponse[]>(
               `/listening/places/${place.id}/situations`,
             );
 
@@ -280,7 +337,7 @@ export default function AdminContentScreen() {
               label: place.nameVi || place.nameJa || "Tên mới",
               icon: "cart" as IconName,
               status: "draft" as Status,
-              units: situations.map((situation: any) => ({
+              units: situations.map((situation) => ({
                 id: situation.id,
                 title: situation.titleVi || situation.titleJa || "Tình huống mới",
                 status: "draft" as Status,
@@ -333,6 +390,19 @@ export default function AdminContentScreen() {
     setIsAddingRow(false);
   };
 
+  const saveNewRow = () => {
+    setListeningRows((prev) => [
+      ...prev,
+      {
+        index: String(prev.length + 1),
+        vi: newRow.vi,
+        jp: newRow.jp,
+        timestamp: newRow.timestamp,
+      },
+    ]);
+    resetNewRow();
+  };
+
   const handleCopyTimestamp = async (rowIndex: string, value: string) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -344,7 +414,55 @@ export default function AdminContentScreen() {
   };
 
   const handleConfirmDelete = () => {
+    if (deleteRow) {
+      setListeningRows((prev) =>
+        prev
+          .filter((row) => row.index !== deleteRow)
+          .map((row, index) => ({ ...row, index: String(index + 1) })),
+      );
+    }
     setDeleteRow(null);
+  };
+
+  const handlePublishActiveUnit = async () => {
+    if (!activeUnit || !activeLocation) {
+      return;
+    }
+
+    setSaveStatus("saving");
+
+    try {
+      await draftWorkflow.publish();
+      setLocationsState((prev) =>
+        prev.map((location) =>
+          location.id === activeLocation.id
+            ? {
+                ...location,
+                units: location.units.map((unit) =>
+                  unit.id === activeUnit.id
+                    ? {
+                        ...unit,
+                        status: "published",
+                        vocabCount: vocabRows.length,
+                        listeningCount: listeningRows.length,
+                      }
+                    : unit,
+                ),
+              }
+            : location,
+        ),
+      );
+      setSaveStatus("saved");
+      setLocationToast("Đã xuất bản nội dung. Learner có thể xem nội dung mới.");
+    } catch (error) {
+      console.error("Failed to publish admin content", error);
+      setSaveStatus("error");
+      setLocationToast(
+        error instanceof Error ? error.message : "Không thể xuất bản nội dung.",
+      );
+    }
+
+    window.setTimeout(() => setLocationToast(null), 3000);
   };
 
   return (
@@ -579,9 +697,7 @@ export default function AdminContentScreen() {
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="text-[11px] text-[#7b8b83]">
-                            {saveStatusLabel}
-                          </span>
+                          <AutoSaveIndicator status={draftWorkflow.autoSaveStatus} />
                           {activeUnit?.status === "published" ? (
                             <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
                               Đã xuất bản
@@ -594,12 +710,16 @@ export default function AdminContentScreen() {
 
                           <button
                             type="button"
+                            onClick={handlePublishActiveUnit}
+                            disabled={draftWorkflow.isPublishing}
                             className={`rounded-full px-4 py-2 text-[11px] font-semibold flex items-center gap-2 
-                                bg-[#2f5d50] text-white
+                                bg-[#2f5d50] text-white disabled:opacity-60
                             `}
                           >
                             <EyeIcon className="h-4 w-4" />
-                            <span>Xuất bản</span>
+                            <span>
+                              {draftWorkflow.isPublishing ? "Đang xuất bản..." : "Xuất bản"}
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -905,9 +1025,22 @@ export default function AdminContentScreen() {
                                             <div className="flex items-center gap-2">
                                               <IconButton
                                                 ariaLabel="Save"
-                                                onClick={() =>
-                                                  setEditingRow(null)
-                                                }
+                                                onClick={() => {
+                                                  setListeningRows((prev) =>
+                                                    prev.map((item) =>
+                                                      item.index === row.index
+                                                        ? {
+                                                            ...item,
+                                                            vi: editDraft.vi,
+                                                            jp: editDraft.jp,
+                                                            timestamp:
+                                                              editDraft.timestamp,
+                                                          }
+                                                        : item,
+                                                    ),
+                                                  );
+                                                  setEditingRow(null);
+                                                }}
                                                 className="border-[#a9d7c1] bg-white text-[#2f5d50]"
                                               >
                                                 <CheckIcon className="h-4 w-4" />
@@ -1018,7 +1151,7 @@ export default function AdminContentScreen() {
                                           <IconButton
                                             ariaLabel="Save"
                                             className="border-[#a9d7c1] bg-white text-[#2f5d50]"
-                                            onClick={resetNewRow}
+                                            onClick={saveNewRow}
                                           >
                                             <CheckIcon className="h-4 w-4" />
                                           </IconButton>
@@ -1643,15 +1776,18 @@ export default function AdminContentScreen() {
                     setSaveStatus("saving");
 
                     try {
-                      const created = await apiCall("/listening/admin/places", {
-                        method: "POST",
-                        body: JSON.stringify({
-                          nameVi: nextLabel,
-                          nameJa: nextLabel,
-                          description: null,
-                          avatarUrl: null,
-                        }),
-                      });
+                      const created = await apiCall<ListeningPlaceResponse>(
+                        "/listening/admin/places",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({
+                            nameVi: nextLabel,
+                            nameJa: nextLabel,
+                            description: null,
+                            avatarUrl: null,
+                          }),
+                        },
+                      );
 
                       setLocationsState((prev) =>
                         prev.map((l) =>
@@ -1822,15 +1958,18 @@ export default function AdminContentScreen() {
                     setSaveStatus("saving");
 
                     try {
-                      const created = await apiCall("/listening/admin/situations", {
-                        method: "POST",
-                        body: JSON.stringify({
-                          placeId: currentLocationId,
-                          titleVi: nextTitle,
-                          titleJa: nextTitle,
-                          description: null,
-                        }),
-                      });
+                      const created = await apiCall<ListeningSituationResponse>(
+                        "/listening/admin/situations",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({
+                            placeId: currentLocationId,
+                            titleVi: nextTitle,
+                            titleJa: nextTitle,
+                            description: null,
+                          }),
+                        },
+                      );
 
                       setLocationsState((prev) =>
                         prev.map((l) =>
