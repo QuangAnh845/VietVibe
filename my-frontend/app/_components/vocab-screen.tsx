@@ -391,7 +391,7 @@ export default function VocabScreen() {
   );
 }
 
-function ArrowLeftIcon({ className }: { className?: string }) {
+export function ArrowLeftIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}

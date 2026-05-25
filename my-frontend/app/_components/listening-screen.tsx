@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -31,6 +30,78 @@ type ListeningLesson = {
   transcriptLines: TranscriptLine[];
 };
 
+type VocabCard = {
+  id: string;
+  term: string;
+  reading?: string;
+  tag?: string;
+  meaning?: string;
+  example?: string;
+  note?: string;
+};
+
+type ApiEnvironmentSound = {
+  id?: string | number;
+  _id?: string | number;
+  name?: string;
+  audio_url?: string;
+  audioUrl?: string;
+};
+
+type ApiEnvironmentSoundResponse = {
+  data?: unknown[];
+};
+
+type ApiTranscriptLine = {
+  _id?: string | number;
+  id?: string | number;
+  start_time?: number;
+  startTime?: number;
+  end_time?: number;
+  endTime?: number;
+  text_vi?: string;
+  textVi?: string;
+  text_ja?: string;
+  textJa?: string;
+  audio_url?: string | null;
+  audioUrl?: string | null;
+};
+
+type ApiListeningLesson = {
+  _id?: string | number;
+  id?: string | number;
+  learning_unit_id?: string | number;
+  learningUnitId?: string | number;
+  title_vi?: string;
+  titleVi?: string;
+  title_ja?: string;
+  titleJa?: string;
+  audio_url?: string;
+  audioUrl?: string;
+  duration_seconds?: number;
+  durationSeconds?: number;
+  description?: string | null;
+  transcriptLines?: unknown[];
+};
+
+type ApiVocabCard = {
+  id?: string | number;
+  _id?: string | number;
+  wordVi?: string;
+  word_vi?: string;
+  term?: string;
+  learningUnit?: {
+    titleJa?: string;
+    title_ja?: string;
+  };
+  tag?: string;
+  meaningJa?: string;
+  meaning_ja?: string;
+  exampleVi?: string;
+  example_vi?: string;
+  note?: string;
+};
+
 const defaultAmbientOptions: EnvironmentSoundOption[] = [
   { id: "cafe", label: "カフェ" },
   { id: "road", label: "道路" },
@@ -46,11 +117,77 @@ const PROGRESS_EVENT = "vv-progress-updated";
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
+const getApiErrorMessage = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") return undefined;
+  const record = payload as { message?: string; error?: string };
+  return record.message ?? record.error;
+};
+
 interface StoredSettings {
   speed: (typeof speeds)[number];
   playMode: PlayMode;
   ambientSound: AmbientSound;
   ambientVolume: number;
+}
+
+async function fetchVocabCards(learningUnitId?: string): Promise<VocabCard[]> {
+  try {
+    let url = `${BACKEND_URL}/vocabulary`;
+
+    if (learningUnitId) {
+      url = `${BACKEND_URL}/vocabulary/learning-unit/${learningUnitId}`;
+    } else {
+      url = `${BACKEND_URL}/vocabulary?limit=100`;
+    }
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      const contentType = res.headers.get("content-type");
+      let errorMsg = `HTTP ${res.status}`;
+
+      if (contentType?.includes("application/json")) {
+        try {
+          const json = await res.json();
+          errorMsg = json?.message || json?.error || errorMsg;
+        } catch {
+          errorMsg = res.statusText || errorMsg;
+        }
+      }
+
+      throw new Error(`${errorMsg}`);
+    }
+
+    const json = (await res.json()) as unknown;
+    const data = Array.isArray(json)
+      ? json
+      : Array.isArray((json as { data?: unknown }).data)
+        ? ((json as { data?: unknown[] }).data ?? [])
+        : [];
+
+    return data.map((item) => {
+      const c = item as ApiVocabCard;
+
+      return {
+        id: String(c.id ?? c._id ?? ""),
+        term: c.wordVi ?? c.word_vi ?? c.term ?? "",
+        reading: c.learningUnit?.titleJa ?? c.learningUnit?.title_ja,
+        tag: c.tag ?? undefined,
+        meaning: c.meaningJa ?? c.meaning_ja ?? "",
+        example: c.exampleVi ?? c.example_vi ?? "",
+        note: c.note ?? undefined,
+      };
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error("Failed to load vocab cards:", errorMsg);
+    throw error;
+  }
 }
 
 export default function ListeningScreen() {
@@ -78,6 +215,8 @@ export default function ListeningScreen() {
   const [ambientSound, setAmbientSound] = useState<AmbientSound>("cafe");
   const [ambientVolume, setAmbientVolume] = useState(40);
 
+  const [activeTab, setActiveTab] = useState<"vocab" | "listen">("listen");
+
   const [currentIndex, setCurrentIndex] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [lesson, setLesson] = useState<ListeningLesson | null>(null);
@@ -86,9 +225,25 @@ export default function ListeningScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [ambientOptions, setAmbientOptions] = useState<EnvironmentSoundOption[]>(defaultAmbientOptions);
-  const [lineAudioUrls, setLineAudioUrls] = useState<Record<string, string>>({});
-  const [lineDurations, setLineDurations] = useState<Record<string, number>>({});
+  const [ambientOptions, setAmbientOptions] = useState<
+    EnvironmentSoundOption[]
+  >(defaultAmbientOptions);
+  const [lineAudioUrls, setLineAudioUrls] = useState<Record<string, string>>(
+    {},
+  );
+  const [lineDurations, setLineDurations] = useState<Record<string, number>>(
+    {},
+  );
+  const [vocabIndex, setVocabIndex] = useState(0);
+  const [vocabFlipped, setVocabFlipped] = useState(false);
+  const [vocabFlippedCardIds, setVocabFlippedCardIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [hasMarkedVocabCompletion, setHasMarkedVocabCompletion] =
+    useState(false);
+  const [vocabCards, setVocabCards] = useState<VocabCard[]>([]);
+  const [vocabLoading, setVocabLoading] = useState(true);
+  const [vocabError, setVocabError] = useState<string | null>(null);
 
   useEffect(() => {
     currentIndexRef.current = currentIndex;
@@ -102,13 +257,18 @@ export default function ListeningScreen() {
       try {
         const envRes = await fetch(`${BACKEND_URL}/environment-sounds`);
         if (envRes.ok) {
-          const envData = await envRes.json();
-          if (envData.data && envData.data.length > 0) {
-            const mapped = envData.data.map((s: any) => ({
-              id: s.id,
-              label: s.name,
-              audioUrl: s.audio_url,
-            }));
+          const envData = (await envRes.json()) as ApiEnvironmentSoundResponse;
+          const envList = Array.isArray(envData.data) ? envData.data : [];
+          if (envList.length > 0) {
+            const mapped: EnvironmentSoundOption[] = envList.map((item) => {
+              const s = item as ApiEnvironmentSound;
+
+              return {
+                id: String(s.id ?? s._id ?? ""),
+                label: s.name ?? "",
+                audioUrl: s.audio_url ?? s.audioUrl,
+              };
+            });
             mapped.push({ id: "off", label: "オフ" });
             if (mounted) setAmbientOptions(mapped);
           }
@@ -121,13 +281,16 @@ export default function ListeningScreen() {
       let authData = null;
       try {
         authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
-      } catch (e) {}
+      } catch {}
 
       if (authData?.accessToken) {
         try {
-          const res = await fetch(`${BACKEND_URL}/users/me/listening-settings`, {
-            headers: { Authorization: `Bearer ${authData.accessToken}` }
-          });
+          const res = await fetch(
+            `${BACKEND_URL}/users/me/listening-settings`,
+            {
+              headers: { Authorization: `Bearer ${authData.accessToken}` },
+            },
+          );
           if (res.ok) {
             const settings = await res.json();
             if (mounted && Object.keys(settings).length > 0) {
@@ -162,7 +325,9 @@ export default function ListeningScreen() {
       }
     };
     void loadSettingsAndOptions();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -186,15 +351,15 @@ export default function ListeningScreen() {
           const url = `${BACKEND_URL}/listening/learning-unit/${learningUnitId}`;
           console.log(`Fetching listening lesson from: ${url}`);
           const detailRes = await fetch(url);
-          const detailJson = await detailRes.json();
+          const detailPayload = (await detailRes.json()) as unknown;
 
           if (!detailRes.ok) {
             throw new Error(
-              detailJson?.message ||
-                detailJson?.error ||
-                `HTTP ${detailRes.status}`,
+              getApiErrorMessage(detailPayload) || `HTTP ${detailRes.status}`,
             );
           }
+
+          const detailJson = detailPayload as ApiListeningLesson;
 
           selectedLesson = {
             id: String(detailJson._id ?? detailJson.id),
@@ -208,32 +373,41 @@ export default function ListeningScreen() {
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
             transcriptLines: Array.isArray(detailJson.transcriptLines)
-              ? detailJson.transcriptLines.map((line: any, index: number) => ({
-                  id: String(line._id ?? line.id ?? `${index}`),
-                  startTime: line.start_time ?? line.startTime ?? 0,
-                  endTime: line.end_time ?? line.endTime ?? 0,
-                  textVi: line.text_vi ?? line.textVi ?? "",
-                  textJa: line.text_ja ?? line.textJa ?? "",
-                  audioUrl: line.audio_url ?? line.audioUrl ?? null,
-                }))
+              ? detailJson.transcriptLines.map((line, index: number) => {
+                  const lineItem = line as ApiTranscriptLine;
+
+                  return {
+                    id: String(lineItem._id ?? lineItem.id ?? `${index}`),
+                    startTime: lineItem.start_time ?? lineItem.startTime ?? 0,
+                    endTime: lineItem.end_time ?? lineItem.endTime ?? 0,
+                    textVi: lineItem.text_vi ?? lineItem.textVi ?? "",
+                    textJa: lineItem.text_ja ?? lineItem.textJa ?? "",
+                    audioUrl: lineItem.audio_url ?? lineItem.audioUrl ?? null,
+                  };
+                })
               : [],
           };
         } else {
           const listUrl = `${BACKEND_URL}/listening`;
           console.log(`Fetching listening list from: ${listUrl}`);
           const listRes = await fetch(listUrl);
-          const listJson = await listRes.json();
+          const listJson = (await listRes.json()) as unknown;
 
           if (!listRes.ok) {
             throw new Error(
-              listJson?.message || listJson?.error || `HTTP ${listRes.status}`,
+              getApiErrorMessage(listJson) || `HTTP ${listRes.status}`,
             );
           }
 
-          const lessonsArray: any[] = Array.isArray(listJson) ? listJson : [];
+          const lessonsArray: unknown[] = Array.isArray(listJson)
+            ? listJson
+            : [];
           // Pick by lesson order instead of title: use the second lesson if it exists.
           // With the current seed data, this is the payment lesson.
-          const chosen = lessonsArray[1] || lessonsArray[0] || null;
+          const chosen =
+            (lessonsArray[1] as ApiListeningLesson | undefined) ||
+            (lessonsArray[0] as ApiListeningLesson | undefined) ||
+            null;
           if (!chosen) {
             throw new Error("No listening lessons found");
           }
@@ -242,15 +416,15 @@ export default function ListeningScreen() {
           const detailUrl = `${BACKEND_URL}/listening/${id}`;
           console.log(`Fetching listening detail from: ${detailUrl}`);
           const detailRes = await fetch(detailUrl);
-          const detailJson = await detailRes.json();
+          const detailPayload = (await detailRes.json()) as unknown;
 
           if (!detailRes.ok) {
             throw new Error(
-              detailJson?.message ||
-                detailJson?.error ||
-                `HTTP ${detailRes.status}`,
+              getApiErrorMessage(detailPayload) || `HTTP ${detailRes.status}`,
             );
           }
+
+          const detailJson = detailPayload as ApiListeningLesson;
 
           selectedLesson = {
             id: String(detailJson._id ?? detailJson.id),
@@ -264,14 +438,18 @@ export default function ListeningScreen() {
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
             transcriptLines: Array.isArray(detailJson.transcriptLines)
-              ? detailJson.transcriptLines.map((line: any, index: number) => ({
-                  id: String(line._id ?? line.id ?? `${index}`),
-                  startTime: line.start_time ?? line.startTime ?? 0,
-                  endTime: line.end_time ?? line.endTime ?? 0,
-                  textVi: line.text_vi ?? line.textVi ?? "",
-                  textJa: line.text_ja ?? line.textJa ?? "",
-                  audioUrl: line.audio_url ?? line.audioUrl ?? null,
-                }))
+              ? detailJson.transcriptLines.map((line, index: number) => {
+                  const lineItem = line as ApiTranscriptLine;
+
+                  return {
+                    id: String(lineItem._id ?? lineItem.id ?? `${index}`),
+                    startTime: lineItem.start_time ?? lineItem.startTime ?? 0,
+                    endTime: lineItem.end_time ?? lineItem.endTime ?? 0,
+                    textVi: lineItem.text_vi ?? lineItem.textVi ?? "",
+                    textJa: lineItem.text_ja ?? lineItem.textJa ?? "",
+                    audioUrl: lineItem.audio_url ?? lineItem.audioUrl ?? null,
+                  };
+                })
               : [],
           };
         }
@@ -291,10 +469,11 @@ export default function ListeningScreen() {
           audioRef.current.pause();
           audioRef.current.currentTime = 0;
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (!mounted) return;
-        console.error("Failed to load listening lesson:", error);
-        setLoadError(error?.message || "Failed to load listening lesson");
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error("Failed to load listening lesson:", errorMsg);
+        setLoadError(errorMsg || "Failed to load listening lesson");
         setLesson(null);
         setLines([]);
         currentIndexRef.current = 0;
@@ -330,22 +509,23 @@ export default function ListeningScreen() {
     let authData = null;
     try {
       authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
-    } catch (e) {}
+    } catch {}
 
     if (authData?.accessToken) {
       try {
         await fetch(`${BACKEND_URL}/users/me/listening-settings`, {
-          method: 'PUT',
-          headers: { 
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authData.accessToken}` 
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authData.accessToken}`,
           },
           body: JSON.stringify({
             playback_speed: newSpeed === "0.75x" ? 0.75 : 1.0,
             auto_pause: newPlayMode === "study",
-            environment_sound_id: newAmbientSound === "off" ? null : newAmbientSound,
-            environment_volume: newAmbientVolume
-          })
+            environment_sound_id:
+              newAmbientSound === "off" ? null : newAmbientSound,
+            environment_volume: newAmbientVolume,
+          }),
         });
       } catch (e) {
         console.error("Failed to save settings to API", e);
@@ -406,9 +586,13 @@ export default function ListeningScreen() {
   const currentLine = lines[currentIndex];
   const isLastLine = lines.length > 0 && currentIndex >= lines.length - 1;
 
-  const vocabHref = learningUnitId
-    ? `/vocab?learningUnitId=${encodeURIComponent(learningUnitId)}`
-    : "/vocab";
+  const vocabCard =
+    vocabCards[vocabIndex] ??
+    ({ id: "", term: "", meaning: "", example: "" } as VocabCard);
+  const isLastVocabCard =
+    vocabCards.length > 0 && vocabIndex >= vocabCards.length - 1;
+  const hasFlippedAllVocab =
+    vocabCards.length > 0 && vocabFlippedCardIds.size >= vocabCards.length;
 
   const updateLastSelectionMode = (mode: "vocab" | "listen") => {
     if (typeof window === "undefined") return;
@@ -440,18 +624,21 @@ export default function ListeningScreen() {
       : `${BACKEND_URL}/${audioUrl}`;
   }, []);
 
-  const buildLineAudioCandidates = useCallback((line: TranscriptLine) => {
-    const explicitUrl = line.audioUrl ? [resolveAudioUrl(line.audioUrl)] : [];
-    const fileName = `${encodeURIComponent(line.textVi.trim())}.mp3`;
-    const folderIds = [lesson?.learningUnitId, lesson?.id].filter(Boolean);
+  const buildLineAudioCandidates = useCallback(
+    (line: TranscriptLine) => {
+      const explicitUrl = line.audioUrl ? [resolveAudioUrl(line.audioUrl)] : [];
+      const fileName = `${encodeURIComponent(line.textVi.trim())}.mp3`;
+      const folderIds = [lesson?.learningUnitId, lesson?.id].filter(Boolean);
 
-    return [
-      ...explicitUrl,
-      ...folderIds.map((folderId) =>
-        resolveAudioUrl(`/audios/${folderId}/${fileName}`),
-      ),
-    ];
-  }, [lesson?.id, lesson?.learningUnitId, resolveAudioUrl]);
+      return [
+        ...explicitUrl,
+        ...folderIds.map((folderId) =>
+          resolveAudioUrl(`/audios/${folderId}/${fileName}`),
+        ),
+      ];
+    },
+    [lesson?.id, lesson?.learningUnitId, resolveAudioUrl],
+  );
 
   const getFallbackLineDuration = (line: TranscriptLine) =>
     Math.max(line.endTime - line.startTime, 0);
@@ -466,7 +653,7 @@ export default function ListeningScreen() {
 
   const totalAudioDuration = lines.length
     ? lines.reduce((total, line) => total + getLineDuration(line), 0)
-    : lesson?.durationSeconds ?? 0;
+    : (lesson?.durationSeconds ?? 0);
 
   const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
 
@@ -475,8 +662,12 @@ export default function ListeningScreen() {
   const resolvedAudioSrc =
     currentLineAudioUrl || resolveAudioUrl(lesson?.audioUrl ?? "");
 
-  const selectedAmbientOption = ambientOptions.find((o) => o.id === ambientSound);
-  const ambientAudioSrc = selectedAmbientOption?.audioUrl ? resolveAudioUrl(selectedAmbientOption.audioUrl) : "";
+  const selectedAmbientOption = ambientOptions.find(
+    (o) => o.id === ambientSound,
+  );
+  const ambientAudioSrc = selectedAmbientOption?.audioUrl
+    ? resolveAudioUrl(selectedAmbientOption.audioUrl)
+    : "";
 
   // Synchronize ambient sound with main player state, volume, and selection
   useEffect(() => {
@@ -626,7 +817,10 @@ export default function ListeningScreen() {
       audio.load();
     });
 
-  const playLoadedAudio = async (audio: HTMLAudioElement, requestId: number) => {
+  const playLoadedAudio = async (
+    audio: HTMLAudioElement,
+    requestId: number,
+  ) => {
     try {
       await audio.play();
       if (playbackRequestIdRef.current === requestId) {
@@ -856,16 +1050,18 @@ export default function ListeningScreen() {
   const syncProgressToAPI = async (progressSeconds: number) => {
     if (!lesson?.id) return;
     let authData = null;
-    try { authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}"); } catch (e) {}
+    try {
+      authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
+    } catch {}
     if (authData?.accessToken) {
       try {
         await fetch(`${BACKEND_URL}/situations/${lesson.id}/progress`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authData.accessToken}` 
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authData.accessToken}`,
           },
-          body: JSON.stringify({ progress_seconds: progressSeconds })
+          body: JSON.stringify({ progress_seconds: progressSeconds }),
         });
       } catch (e) {
         console.error("Failed to update progress to API", e);
@@ -877,9 +1073,7 @@ export default function ListeningScreen() {
     if (typeof window === "undefined") return;
 
     try {
-      const lastSelectionRaw = localStorage.getItem(
-        LAST_SELECTION_STORAGE_KEY,
-      );
+      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
       if (!lastSelectionRaw) return;
 
       const lastSelection = JSON.parse(lastSelectionRaw) as {
@@ -917,6 +1111,52 @@ export default function ListeningScreen() {
     router.push("/");
   };
 
+  const markVocabCompletion = () => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
+      if (!lastSelectionRaw) return;
+
+      const lastSelection = JSON.parse(lastSelectionRaw) as {
+        sectionId: string;
+        taskId: string;
+        mode: "vocab" | "listen";
+      };
+
+      if (lastSelection.mode !== "vocab") return;
+
+      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
+      const progress = stored ? JSON.parse(stored) : {};
+
+      if (!progress[lastSelection.sectionId]) {
+        progress[lastSelection.sectionId] = {};
+      }
+      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
+        progress[lastSelection.sectionId][lastSelection.taskId] = {};
+      }
+
+      if (progress[lastSelection.sectionId][lastSelection.taskId].vocab) {
+        setHasMarkedVocabCompletion(true);
+        return;
+      }
+
+      progress[lastSelection.sectionId][lastSelection.taskId].vocab = true;
+      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+      window.dispatchEvent(new Event(PROGRESS_EVENT));
+      setHasMarkedVocabCompletion(true);
+    } catch (error) {
+      console.error("Failed to store vocab completion", error);
+    }
+  };
+
+  const markVocabCompletionAndExit = () => {
+    if (hasFlippedAllVocab) {
+      markVocabCompletion();
+    }
+    router.push("/");
+  };
+
   const goPrev = () => {
     void seekToLine(Math.max(currentIndex - 1, 0), isPlaying);
   };
@@ -929,11 +1169,82 @@ export default function ListeningScreen() {
     void seekToLine(Math.min(currentIndex + 1, lines.length - 1), isPlaying);
   };
 
+  const goPrevVocab = () => {
+    setVocabIndex((prev) => Math.max(prev - 1, 0));
+    setVocabFlipped(false);
+  };
+
+  const goNextVocab = () => {
+    if (isLastVocabCard) {
+      markVocabCompletionAndExit();
+      return;
+    }
+    setVocabIndex((prev) => Math.min(prev + 1, vocabCards.length - 1));
+    setVocabFlipped(false);
+  };
+
+  const handleVocabCardFlip = () => {
+    if (!vocabCard?.id) return;
+
+    setVocabFlipped((prev) => {
+      const nextFlipped = !prev;
+
+      if (nextFlipped) {
+        setVocabFlippedCardIds((prevIds) => {
+          const nextIds = new Set(prevIds);
+          nextIds.add(vocabCard.id);
+          return nextIds;
+        });
+      }
+
+      return nextFlipped;
+    });
+  };
+
   const formatSeconds = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   };
+
+  useEffect(() => {
+    let mounted = true;
+    queueMicrotask(() => {
+      if (!mounted) return;
+      setVocabLoading(true);
+      setVocabError(null);
+    });
+
+    fetchVocabCards(learningUnitId ?? undefined)
+      .then((result) => {
+        if (!mounted) return;
+        setVocabCards(result);
+        setVocabIndex(0);
+        setVocabFlipped(false);
+        setVocabFlippedCardIds(new Set());
+        setHasMarkedVocabCompletion(false);
+        setVocabLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (!mounted) return;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error("useEffect - Vocab fetch error:", errorMsg);
+        setVocabError(errorMsg || "Failed to load vocabulary cards");
+        setVocabCards([]);
+        setVocabLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [learningUnitId]);
+
+  useEffect(() => {
+    if (!hasFlippedAllVocab || hasMarkedVocabCompletion) return;
+    queueMicrotask(() => {
+      markVocabCompletion();
+    });
+  }, [hasFlippedAllVocab, hasMarkedVocabCompletion]);
 
   return (
     <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
@@ -1101,17 +1412,37 @@ export default function ListeningScreen() {
         </div>
 
         <div className="flex items-center gap-6 border-b border-(--vv-border) text-sm font-semibold vv-rise-in vv-delay-1">
-          <Link
-            href={vocabHref}
-            onClick={() => updateLastSelectionMode("vocab")}
-            className="pb-3 text-(--vv-muted) transition hover:text-(--vv-accent-strong)"
+          <button
+            type="button"
+            onClick={() => {
+              updateLastSelectionMode("vocab");
+              setActiveTab("vocab");
+            }}
+            className={`pb-3 transition ${
+              activeTab === "vocab"
+                ? "relative text-(--vv-accent-strong)"
+                : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
+            }`}
           >
             語彙
-          </Link>
-          <span className="relative pb-3 text-(--vv-accent-strong)">
+            {activeTab === "vocab" ? (
+              <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("listen")}
+            className={`pb-3 transition ${
+              activeTab === "listen"
+                ? "relative text-(--vv-accent-strong)"
+                : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
+            }`}
+          >
             聞き取り
-            <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
-          </span>
+            {activeTab === "listen" ? (
+              <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
+            ) : null}
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 vv-rise-in vv-delay-2">
@@ -1203,122 +1534,251 @@ export default function ListeningScreen() {
           </div>
         ) : null}
 
-        <div className="rounded-3xl bg-[#cfeee3] p-4 shadow-[0_12px_24px_rgba(35,70,60,0.12)] vv-rise-in vv-delay-3">
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              onClick={handleTogglePlay}
-              disabled={!lesson?.audioUrl}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-(--vv-accent-strong) text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Play"
-            >
-              {isPlaying ? (
-                <PauseIcon className="h-5 w-5" />
-              ) : (
-                <PlayIcon className="h-5 w-5" />
-              )}
-            </button>
-            <div className="flex-1">
-              <div className="h-2 w-full rounded-full bg-white/70">
-                <div
-                  className="h-full rounded-full bg-(--vv-accent-strong)"
-                  style={{
-                    width:
-                      lines.length > 0 && totalAudioDuration > 0
-                        ? `${Math.max(
-                            8,
-                            Math.min(100, (currentTime / totalAudioDuration) * 100),
-                          )}%`
-                        : "8%",
-                  }}
-                />
+        {activeTab === "listen" ? (
+          <>
+            <div className="vv-rise-in vv-delay-3">
+              <div className="rounded-3xl bg-[#cfeee3] p-4 shadow-[0_12px_24px_rgba(35,70,60,0.12)]">
+                <div className="flex items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={handleTogglePlay}
+                    disabled={!lesson?.audioUrl}
+                    className="flex h-12 w-12 items-center justify-center rounded-full bg-(--vv-accent-strong) text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="Play"
+                  >
+                    {isPlaying ? (
+                      <PauseIcon className="h-5 w-5" />
+                    ) : (
+                      <PlayIcon className="h-5 w-5" />
+                    )}
+                  </button>
+                  <div className="flex-1">
+                    <div className="h-2 w-full rounded-full bg-white/70">
+                      <div
+                        className="h-full rounded-full bg-(--vv-accent-strong)"
+                        style={{
+                          width:
+                            lines.length > 0 && totalAudioDuration > 0
+                              ? `${Math.max(
+                                  8,
+                                  Math.min(
+                                    100,
+                                    (currentTime / totalAudioDuration) * 100,
+                                  ),
+                                )}%`
+                              : "8%",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold text-(--vv-accent-strong)">
+                    {formatSeconds(Math.floor(currentTime))} /{" "}
+                    {formatSeconds(Math.floor(totalAudioDuration))}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-3xl bg-white/90 p-4 shadow-[0_12px_24px_rgba(31,43,39,0.08)] ring-1 ring-(--vv-ring)">
+                {currentLine ? (
+                  <>
+                    <p className="text-sm font-semibold text-foreground">
+                      {currentLine.textVi}
+                    </p>
+                    <p className="mt-2 text-xs text-(--vv-muted)">
+                      {showJapanese ? currentLine.textJa : ""}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-(--vv-muted)">
+                    会話データがありません。
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={goPrev}
+                  disabled={currentIndex === 0}
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                  前の文
+                </button>
+                <span className="text-xs font-semibold text-(--vv-muted)">
+                  {lines.length === 0 ? 0 : currentIndex + 1} / {lines.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={goNext}
+                  disabled={lines.length === 0}
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
+                >
+                  {isLastLine ? "完了" : "次の文"}
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
               </div>
             </div>
-            <span className="text-xs font-semibold text-(--vv-accent-strong)">
-              {formatSeconds(Math.floor(currentTime))} /{" "}
-              {formatSeconds(Math.floor(totalAudioDuration))}
-            </span>
+
+            <div className="flex flex-col gap-2">
+              {lines.map((line, index) => {
+                const isActive = index === currentIndex;
+                return (
+                  <button
+                    key={line.id}
+                    type="button"
+                    onClick={() => {
+                      void seekToLine(index, true);
+                    }}
+                    className={`flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition ${
+                      isActive
+                        ? "bg-[#cfeee3]"
+                        : "bg-white/80 ring-1 ring-(--vv-border)"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-8 w-8 items-center justify-center rounded-full ${
+                        isActive
+                          ? "bg-(--vv-accent-strong) text-white"
+                          : "bg-(--vv-border) text-(--vv-muted)"
+                      }`}
+                    >
+                      <PlayIcon className="h-4 w-4" />
+                    </span>
+                    <span className="flex-1">
+                      <p className="text-sm font-semibold text-foreground">
+                        {line.textVi}
+                      </p>
+                      <p className="mt-1 text-xs text-(--vv-muted)">
+                        {showJapanese ? line.textJa : ""}
+                      </p>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : vocabLoading ? (
+          <div className="mt-6 text-center text-sm text-(--vv-muted)">
+            読み込み中...
           </div>
-        </div>
-
-        <div className="rounded-3xl bg-white/90 p-4 shadow-[0_12px_24px_rgba(31,43,39,0.08)] ring-1 ring-(--vv-ring)">
-          {currentLine ? (
-            <>
-              <p className="text-sm font-semibold text-foreground">
-                {currentLine.textVi}
+        ) : vocabError ? (
+          <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm">
+            <div className="mb-2 font-semibold text-red-700">エラー</div>
+            <div className="mb-3 text-red-600">{vocabError}</div>
+            <div className="border-t border-red-200 pt-3 text-xs text-red-600">
+              <p className="mb-2 font-semibold">デバッグ情報:</p>
+              <p>
+                Backend URL: <code className="font-mono">{BACKEND_URL}</code>
               </p>
-              <p className="mt-2 text-xs text-(--vv-muted)">
-                {showJapanese ? currentLine.textJa : ""}
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-(--vv-muted)">
-              会話データがありません。
-            </p>
-          )}
-        </div>
+              {learningUnitId && (
+                <p>
+                  Learning Unit ID:{" "}
+                  <code className="font-mono">{learningUnitId}</code>
+                </p>
+              )}
+              <p className="mt-2 font-semibold">トラブルシューティング:</p>
+              <ul className="list-inside list-disc space-y-1 text-xs">
+                <li>
+                  バックエンドが起動しているか確認:{" "}
+                  <code className="font-mono">npm run start:dev</code>
+                </li>
+                <li>バックエンドがポート3001で起動していることを確認</li>
+                <li>
+                  Swagger ドキュメント:{" "}
+                  <a
+                    href="http://localhost:3001/api/docs"
+                    target="_blank"
+                    className="underline"
+                  >
+                    http://localhost:3001/api/docs
+                  </a>
+                </li>
+                <li>ブラウザの開発ツールのコンソールでエラーを確認</li>
+              </ul>
+            </div>
+          </div>
+        ) : vocabCards.length === 0 ? (
+          <div className="mt-6 text-center text-sm text-(--vv-muted)">
+            単語が見つかりません。
+          </div>
+        ) : (
+          <div>
+            <div className="text-xs font-semibold m-2 ">
+              カード {vocabLoading ? "..." : vocabIndex + 1} /{" "}
+              {vocabLoading ? "..." : vocabCards.length}
+            </div>
+            <div
+              className=" vv-flip"
+              data-flipped={vocabFlipped}
+              onClick={handleVocabCardFlip}
+            >
+              <div className="relative vv-flip-inner">
+                <div className="vv-flip-side w-full ">
+                  <div className="w-full rounded-3xl border border-(--vv-border) bg-white px-6 py-10 text-center shadow-[0_12px_24px_rgba(31,43,39,0.08)]">
+                    <span className="inline-flex items-center rounded-full bg-[#b24a3f] px-3 py-1 text-[11px] font-semibold tracking-wide text-white">
+                      {vocabCard.tag}
+                    </span>
 
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={goPrev}
-            disabled={currentIndex === 0}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
-          >
-            <ChevronLeftIcon className="h-4 w-4" />
-            前の文
-          </button>
-          <span className="text-xs font-semibold text-(--vv-muted)">
-            {lines.length === 0 ? 0 : currentIndex + 1} / {lines.length}
-          </span>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={lines.length === 0}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border) disabled:opacity-50"
-          >
-            {isLastLine ? "完了" : "次の文"}
-            <ChevronRightIcon className="h-4 w-4" />
-          </button>
-        </div>
+                    <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">
+                      {vocabCard.term}
+                    </h2>
 
-        <div className="flex flex-col gap-2">
-          {lines.map((line, index) => {
-            const isActive = index === currentIndex;
-            return (
+                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-(--vv-muted)">
+                      {vocabCard.reading}
+                    </p>
+
+                    <p className="mt-3 text-xs text-(--vv-muted) italic">
+                      “{vocabCard.example}”
+                    </p>
+                  </div>
+                  <p className="mt-6 text-xs font-semibold text-(--vv-muted) text-center">
+                    カードをタップして裏返す
+                  </p>
+                </div>
+
+                <div className="absolute inset-0 h-full w-full vv-flip-side vv-flip-back ">
+                  <div className="rounded-3xl border border-(--vv-border) bg-white px-6 py-8 text-left shadow-[0_12px_24px_rgba(31,43,39,0.08)]">
+                    <p className="text-base font-semibold text-foreground">
+                      {vocabCard.meaning}
+                    </p>
+
+                    <p className="mt-3 text-xs text-(--vv-muted)">
+                      例：「{vocabCard.example}」
+                    </p>
+
+                    <div className="mt-4 rounded-2xl bg-[#f3f4f2] px-4 py-3 text-xs text-(--vv-muted)">
+                      メモ: {vocabCard.note}
+                    </div>
+                  </div>
+                  <p className="mt-6 text-xs font-semibold text-(--vv-muted) text-center">
+                    カードをタップして表に戻す
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between">
               <button
-                key={line.id}
                 type="button"
-                onClick={() => {
-                  void seekToLine(index, isPlaying);
-                }}
-                className={`flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition ${
-                  isActive
-                    ? "bg-[#cfeee3]"
-                    : "bg-white/80 ring-1 ring-(--vv-border)"
-                }`}
+                onClick={goPrevVocab}
+                disabled={vocabIndex === 0}
+                className="inline-flex items-center gap-2 rounded-full bg-[#eef0ec] px-4 py-2 text-xs font-semibold text-(--vv-muted) transition disabled:opacity-50"
               >
-                <span
-                  className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                    isActive
-                      ? "bg-(--vv-accent-strong) text-white"
-                      : "bg-(--vv-border) text-(--vv-muted)"
-                  }`}
-                >
-                  <PlayIcon className="h-4 w-4" />
-                </span>
-                <span className="flex-1">
-                  <p className="text-sm font-semibold text-foreground">
-                    {line.textVi}
-                  </p>
-                  <p className="mt-1 text-xs text-(--vv-muted)">
-                    {showJapanese ? line.textJa : ""}
-                  </p>
-                </span>
+                <ChevronLeftIcon className="h-4 w-4" />
+                前へ
               </button>
-            );
-          })}
-        </div>
+              <button
+                type="button"
+                onClick={goNextVocab}
+                className="inline-flex items-center gap-2 rounded-full bg-[#dfe5df] px-4 py-2 text-xs font-semibold text-(--vv-accent-strong) transition"
+              >
+                {isLastVocabCard ? "完了" : "次へ"}
+                <ChevronRightIcon className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
