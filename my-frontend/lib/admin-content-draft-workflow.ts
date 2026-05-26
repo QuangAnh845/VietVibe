@@ -43,6 +43,7 @@ export type AdminContentDraftPayload = {
     audioUrl?: string;
     durationSeconds?: number;
     description?: string;
+    ambientSoundIds?: string[];
     transcriptLines: AdminDraftTranscriptLine[];
   };
   savedAt?: string;
@@ -279,17 +280,31 @@ async function publishVocabularyCards(
   const createdIds: string[] = [];
 
   for (const card of draft.vocabCards) {
+    const payload = {
+      learning_unit_id: learningUnitId,
+      word_vi: card.term,
+      meaning_ja: card.meaning,
+      example_vi: card.example || null,
+      example_ja: card.exampleJa || null,
+      note: card.note || null,
+      tag: card.type || null,
+    };
+
+    if (card.id) {
+      const result = await api.put<{ data?: { id?: string }; id?: string }>(
+        `/vocabulary/admin/${card.id}`,
+        payload,
+      );
+      const id = result.data?.id || result.id || card.id;
+      if (id) {
+        createdIds.push(id);
+      }
+      continue;
+    }
+
     const result = await api.post<{ data?: { id?: string }; id?: string }>(
       "/vocabulary/admin/create",
-      {
-        learning_unit_id: learningUnitId,
-        word_vi: card.term,
-        meaning_ja: card.meaning,
-        example_vi: card.example || null,
-        example_ja: card.exampleJa || null,
-        note: card.note || null,
-        tag: card.type || null,
-      },
+      payload,
     );
 
     const id = result.data?.id || result.id;
@@ -325,17 +340,28 @@ async function publishListeningLesson(
     };
   });
 
+  const payload = {
+    learningUnitId,
+    titleVi: listening.titleVi,
+    titleJa: listening.titleJa || listening.titleVi,
+    audioUrl: listening.audioUrl,
+    durationSeconds: listening.durationSeconds || 1,
+    description: listening.description || draft.description || null,
+    transcriptLines,
+  };
+
+  if (listening.lessonId) {
+    const lesson = await api.put<{ id?: string; _id?: string }>(
+      `/listening/${listening.lessonId}`,
+      payload,
+    );
+
+    return lesson.id || lesson._id || listening.lessonId;
+  }
+
   const lesson = await api.post<{ id?: string; _id?: string }>(
     "/listening/admin/create",
-    {
-      learningUnitId,
-      titleVi: listening.titleVi,
-      titleJa: listening.titleJa || listening.titleVi,
-      audioUrl: listening.audioUrl,
-      durationSeconds: listening.durationSeconds || 1,
-      description: listening.description || draft.description || null,
-      transcriptLines,
-    },
+    payload,
   );
 
   return lesson.id || lesson._id;
@@ -352,7 +378,18 @@ export async function publishAdminContentDraft(
   const vocabularyCardIds = await publishVocabularyCards(draft, learningUnitId);
   const listeningLessonId = await publishListeningLesson(draft, learningUnitId);
 
-  deleteAdminContentDraftFromBrowser(draft.contentId);
+  if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+    const publishedDraft: AdminContentDraftPayload = {
+      ...draft,
+      status: "PUBLISHED",
+      publishedAt: new Date().toISOString(),
+      savedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(
+      getAdminContentDraftKey(draft.contentId),
+      JSON.stringify(publishedDraft),
+    );
+  }
 
   return {
     placeId,
