@@ -47,6 +47,7 @@ const {
   TranscriptLine,
   User,
   UserProgress,
+  VocabularyCard,
 } = models;
 
 const COMPLETION_THRESHOLD_SECONDS = 1;
@@ -90,25 +91,34 @@ export class ListeningService {
       created_at: 1,
     });
 
-    const situationsWithUnits = await Promise.all(
-      situations.map(async (situation) => {
-        const learningUnits = await LearningUnit.find({
-          situation_id: situation._id,
-        }).sort({ created_at: 1 });
+    const situationIds = situations.map((situation) => situation._id);
 
-        const learningUnitsWithLevel = await Promise.all(
-          learningUnits.map(async (unit) => {
-            const level = await Level.findById(unit.level_id);
-            return this.mapLearningUnit(unit, level);
-          }),
-        );
+    // Fetch all learning units and their levels in a single query with populate
+    const learningUnits = await LearningUnit.find({
+      situation_id: { $in: situationIds },
+    })
+      .populate('level_id')
+      .sort({ created_at: 1 });
 
-        return {
-          ...this.mapSituation(situation),
-          learningUnits: learningUnitsWithLevel,
-        };
-      }),
-    );
+    // Group learning units by situation_id in memory
+    const unitsBySituation = new Map<string, any[]>();
+    for (const unit of learningUnits) {
+      const sitId = String(unit.situation_id);
+      let arr = unitsBySituation.get(sitId);
+      if (!arr) {
+        arr = [];
+        unitsBySituation.set(sitId, arr);
+      }
+      arr.push(this.mapLearningUnit(unit, unit.level_id));
+    }
+
+    const situationsWithUnits = situations.map((situation) => {
+      const sitId = String(situation._id);
+      return {
+        ...this.mapSituation(situation),
+        learningUnits: unitsBySituation.get(sitId) ?? [],
+      };
+    });
 
     return {
       ...this.mapPlace(place),
@@ -125,17 +135,11 @@ export class ListeningService {
 
     const learningUnits = await LearningUnit.find({
       situation_id: situationObjectId,
-    }).sort({ created_at: 1 });
+    })
+      .populate('level_id')
+      .sort({ created_at: 1 });
 
-    // Get level information for each learning unit
-    const unitsWithLevel = await Promise.all(
-      learningUnits.map(async (unit) => {
-        const level = await Level.findById(unit.level_id);
-        return this.mapLearningUnit(unit, level);
-      }),
-    );
-
-    return unitsWithLevel;
+    return learningUnits.map((unit) => this.mapLearningUnit(unit, unit.level_id));
   }
 
   async getAllListeningLessons() {
@@ -148,15 +152,11 @@ export class ListeningService {
   }
 
   async getAllLearningUnits() {
-    const units = await LearningUnit.find().sort({ created_at: 1 });
-    const unitsWithLevel = await Promise.all(
-      units.map(async (unit) => {
-        const level = await Level.findById(unit.level_id);
-        return this.mapLearningUnit(unit, level);
-      }),
-    );
+    const units = await LearningUnit.find()
+      .populate('level_id')
+      .sort({ created_at: 1 });
 
-    return unitsWithLevel;
+    return units.map((unit) => this.mapLearningUnit(unit, unit.level_id));
   }
 
   async createPlace(createDto: CreatePlaceDto) {
@@ -1064,6 +1064,9 @@ export class ListeningService {
     await TranscriptLine.deleteMany({ lesson_id: { $in: lessonIds } });
     await ListeningSession.deleteMany({ lesson_id: { $in: lessonIds } });
     await UserProgress.deleteMany({
+      learning_unit_id: { $in: learningUnitIds },
+    });
+    await VocabularyCard.deleteMany({
       learning_unit_id: { $in: learningUnitIds },
     });
     await ListeningLesson.deleteMany({
