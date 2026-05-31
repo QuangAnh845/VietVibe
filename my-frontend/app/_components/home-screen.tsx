@@ -416,7 +416,7 @@ export default function HomeScreen() {
       ? `?learningUnitId=${encodeURIComponent(task.learningUnitId)}`
       : "";
 
-    router.push(`${field === "vocab" ? "/vocab" : "/listening"}${query}`);
+    router.push(`/study${query}`);
   };
 
   const handleTaskToggle = (
