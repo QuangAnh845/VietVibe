@@ -627,13 +627,22 @@ export default function ListeningScreen() {
   const buildLineAudioCandidates = useCallback(
     (line: TranscriptLine) => {
       const explicitUrl = line.audioUrl ? [resolveAudioUrl(line.audioUrl)] : [];
-      const fileName = `${encodeURIComponent(line.textVi.trim())}.mp3`;
+      const textVariants = Array.from(
+        new Set([
+          line.textVi.trim(),
+          line.textVi.trim().replace(/[.!?。！？…]+$/u, "").trim(),
+        ]),
+      ).filter(Boolean);
       const folderIds = [lesson?.learningUnitId, lesson?.id].filter(Boolean);
 
       return [
         ...explicitUrl,
-        ...folderIds.map((folderId) =>
-          resolveAudioUrl(`/audios/${folderId}/${fileName}`),
+        ...folderIds.flatMap((folderId) =>
+          textVariants.map((text) =>
+            resolveAudioUrl(
+              `/audios/${folderId}/${encodeURIComponent(text)}.mp3`,
+            ),
+          ),
         ),
       ];
     },

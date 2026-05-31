@@ -80,13 +80,13 @@ export function useAdminContentDraftWorkflow(
     [],
   );
 
-  const publish = useCallback(async () => {
+  const publish = useCallback(async (overrideDraft?: AdminContentDraftPayload) => {
     setIsPublishing(true);
     setPublishError(null);
 
     try {
       autoSave.flush();
-      const result = await publishAdminContentDraft(draft);
+      const result = await publishAdminContentDraft(overrideDraft ?? draft);
       setDraft((currentDraft) => ({
         ...currentDraft,
         placeId: result.placeId,
