@@ -179,6 +179,13 @@ export class ListeningController {
     return this.listeningService.getAllPlaces();
   }
 
+  @Get('levels')
+  @ApiOperation({ summary: 'Get all levels' })
+  @ApiOkResponse({ description: 'List of levels' })
+  getAllLevels() {
+    return this.listeningService.getAllLevels();
+  }
+
   @Get('places/:placeId/full')
   @ApiOperation({ summary: 'Get place with situations and learning units' })
   @ApiParam({ name: 'placeId', description: 'Place id' })
