@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as path from 'path';
+import * as fs from 'fs';
 import { AudioProcessingQueryDto } from './dto/audio-processing-query.dto';
 import { CreateListeningDto } from './dto/create-listening.dto';
 import { CreateLearningUnitDto } from './dto/create-learning-unit.dto';
@@ -233,6 +234,82 @@ export class ListeningService {
       });
   }
 
+  private getAllFilesRecursive(dirPath: string, arrayOfFiles: string[] = []): string[] {
+    const files = fs.readdirSync(dirPath);
+    files.forEach(file => {
+      const fullPath = path.join(dirPath, file);
+      if (fs.statSync(fullPath).isDirectory()) {
+        arrayOfFiles = this.getAllFilesRecursive(fullPath, arrayOfFiles);
+      } else {
+        arrayOfFiles.push(fullPath);
+      }
+    });
+    return arrayOfFiles;
+  }
+
+  async getUploadedAudios() {
+    const audiosDir = path.join(process.cwd(), 'public', 'audios');
+    if (!fs.existsSync(audiosDir)) {
+      return [];
+    }
+    
+    const allFiles = this.getAllFilesRecursive(audiosDir);
+    const allowedExts = ['.mp3', '.wav', '.m4a', '.mp4', '.aac'];
+    
+    return allFiles
+      .filter((f) => {
+        const ext = path.extname(f).toLowerCase();
+        return allowedExts.includes(ext);
+      })
+      .map((f) => {
+        const relativePath = path.relative(audiosDir, f);
+        const urlPath = relativePath.split(path.sep).join('/');
+        return {
+          filename: path.basename(f),
+          url: `/audios/${urlPath}`,
+        };
+      });
+  }
+
+  async renameUploadedAudio(oldUrl: string, newName: string) {
+    if (!oldUrl || !newName) {
+      throw new BadRequestException('Yêu cầu truyền đủ oldUrl và newName');
+    }
+
+    if (!oldUrl.startsWith('/audios/')) {
+      throw new BadRequestException('URL audio không hợp lệ');
+    }
+
+    const audiosDir = path.join(process.cwd(), 'public');
+    const oldFilePath = path.join(audiosDir, ...oldUrl.split('/'));
+    
+    if (!fs.existsSync(oldFilePath)) {
+      throw new NotFoundException('Không tìm thấy file audio trên server');
+    }
+
+    const dirName = path.dirname(oldFilePath);
+    const extension = path.extname(oldFilePath);
+    
+    const oldBasename = path.basename(oldFilePath);
+    const timestampMatch = oldBasename.match(/^(\d{13}-)/);
+    const prefix = timestampMatch ? timestampMatch[1] : `${Date.now()}-`;
+    
+    const newBasename = newName.trim();
+    const newFilename = `${prefix}${newBasename}${extension}`;
+    const newFilePath = path.join(dirName, newFilename);
+
+    fs.renameSync(oldFilePath, newFilePath);
+
+    const newUrl = oldUrl.replace(oldBasename, newFilename);
+    
+    await ListeningLesson.updateMany(
+      { audio_url: oldUrl },
+      { $set: { audio_url: newUrl } }
+    );
+
+    return { oldUrl, newUrl };
+  }
+
   async getLearningUnitsWithoutLesson() {
     const units = await LearningUnit.find().sort({ created_at: 1 });
     const lessons = await ListeningLesson.find().select('learning_unit_id');
@@ -244,8 +321,8 @@ export class ListeningService {
       units
         .filter((unit) => !usedUnitIds.has(String(unit._id)))
         .map(async (unit) => {
-          const situation = await Situation.findById(unit.situation_id);
-          const place = situation
+          const situation = unit.situation_id ? await Situation.findById(unit.situation_id) : null;
+          const place = situation?.place_id
             ? await Place.findById(situation.place_id)
             : null;
           const level = await Level.findById(unit.level_id);
