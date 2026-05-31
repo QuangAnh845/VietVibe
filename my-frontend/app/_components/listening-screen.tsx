@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 type PlayMode = "study" | "continuous";
@@ -111,11 +111,39 @@ const defaultAmbientOptions: EnvironmentSoundOption[] = [
 ];
 
 const SETTINGS_STORAGE_KEY = "vv-listening-settings";
-const PROGRESS_STORAGE_KEY = "vv-task-progress";
-const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
-const PROGRESS_EVENT = "vv-progress-updated";
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+const updateProgressOnBackend = async (
+  taskId: string,
+  field: "vocab" | "listen",
+) => {
+  if (typeof window === "undefined") return;
+
+  let authData: { accessToken?: string } | null = null;
+  try {
+    authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
+  } catch {
+    authData = null;
+  }
+
+  const accessToken =
+    localStorage.getItem("auth_token") || authData?.accessToken;
+  if (!accessToken) return;
+
+  try {
+    await fetch(`${BACKEND_URL}/users/me/progress/learning-units/${taskId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ field, completed: true }),
+    });
+  } catch (error) {
+    console.error(`Failed to persist ${field} completion to API`, error);
+  }
+};
 
 const getApiErrorMessage = (payload: unknown) => {
   if (!payload || typeof payload !== "object") return undefined;
@@ -236,11 +264,7 @@ export default function ListeningScreen() {
   );
   const [vocabIndex, setVocabIndex] = useState(0);
   const [vocabFlipped, setVocabFlipped] = useState(false);
-  const [vocabFlippedCardIds, setVocabFlippedCardIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [hasMarkedVocabCompletion, setHasMarkedVocabCompletion] =
-    useState(false);
+  const [, setVocabFlippedCardIds] = useState<Set<string>>(() => new Set());
   const [vocabCards, setVocabCards] = useState<VocabCard[]>([]);
   const [vocabLoading, setVocabLoading] = useState(true);
   const [vocabError, setVocabError] = useState<string | null>(null);
@@ -591,30 +615,29 @@ export default function ListeningScreen() {
     ({ id: "", term: "", meaning: "", example: "" } as VocabCard);
   const isLastVocabCard =
     vocabCards.length > 0 && vocabIndex >= vocabCards.length - 1;
-  const hasFlippedAllVocab =
-    vocabCards.length > 0 && vocabFlippedCardIds.size >= vocabCards.length;
 
-  const updateLastSelectionMode = (mode: "vocab" | "listen") => {
-    if (typeof window === "undefined") return;
+  const vocabTagSummary = useMemo(() => {
+    const tags = Array.from(
+      new Set(
+        vocabCards
+          .map((card) => card.tag?.trim())
+          .filter((tag): tag is string => Boolean(tag)),
+      ),
+    );
 
-    try {
-      const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!raw) return;
+    if (tags.length === 0) return "";
 
-      const parsed = JSON.parse(raw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
+    const preview = tags.slice(0, 3).join("、");
+    return tags.length > 3 ? `${preview}、...` : preview;
+  }, [vocabCards]);
 
-      localStorage.setItem(
-        LAST_SELECTION_STORAGE_KEY,
-        JSON.stringify({ ...parsed, mode }),
-      );
-    } catch {
-      // Ignore parsing errors
-    }
-  };
+  const headerTitle = activeTab === "vocab" ? "語彙" : "聞き取り";
+  const headerSubtitle =
+    activeTab === "vocab"
+      ? `${vocabCards.length}カード${vocabTagSummary ? ` · ${vocabTagSummary}` : ""}`
+      : "会話";
+  const headerEyebrow =
+    lesson?.titleJa ?? "スーパー / レジで支払う";
 
   const resolveAudioUrl = useCallback((audioUrl: string) => {
     if (!audioUrl) return "";
@@ -630,7 +653,10 @@ export default function ListeningScreen() {
       const textVariants = Array.from(
         new Set([
           line.textVi.trim(),
-          line.textVi.trim().replace(/[.!?。！？…]+$/u, "").trim(),
+          line.textVi
+            .trim()
+            .replace(/[.!?。！？…]+$/u, "")
+            .trim(),
         ]),
       ).filter(Boolean);
       const folderIds = [lesson?.learningUnitId, lesson?.id].filter(Boolean);
@@ -1021,7 +1047,6 @@ export default function ListeningScreen() {
       );
 
       if (sourceLineIsLast) {
-        markListeningCompletion();
         syncProgressToAPI(totalAudioDuration);
       }
 
@@ -1047,7 +1072,6 @@ export default function ListeningScreen() {
     }
 
     setIsPlaying(false);
-    markListeningCompletion();
     if (lines.length > 0) {
       currentIndexRef.current = lines.length - 1;
       setCurrentIndex(lines.length - 1);
@@ -1078,92 +1102,31 @@ export default function ListeningScreen() {
     }
   };
 
-  const markListeningCompletion = () => {
-    if (typeof window === "undefined") return;
+  const markListeningCompletion = async () => {
+    if (!lesson?.learningUnitId) return;
 
     try {
-      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!lastSelectionRaw) return;
-
-      const lastSelection = JSON.parse(lastSelectionRaw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
-
-      if (lastSelection.mode !== "listen") return;
-
-      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      const progress = stored ? JSON.parse(stored) : {};
-      if (!progress[lastSelection.sectionId]) {
-        progress[lastSelection.sectionId] = {};
-      }
-      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
-        progress[lastSelection.sectionId][lastSelection.taskId] = {};
-      }
-
-      if (progress[lastSelection.sectionId][lastSelection.taskId].listen) {
-        return;
-      }
-
-      progress[lastSelection.sectionId][lastSelection.taskId].listen = true;
-      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
-      window.dispatchEvent(new Event(PROGRESS_EVENT));
+      await updateProgressOnBackend(lesson.learningUnitId, "listen");
     } catch (error) {
       console.error("Failed to store listening completion", error);
     }
   };
 
-  const markListeningCompletionAndExit = () => {
-    markListeningCompletion();
-    syncProgressToAPI(totalAudioDuration);
+  const markListeningCompletionAndExit = async () => {
+    await markListeningCompletion();
+    await syncProgressToAPI(totalAudioDuration);
     router.push("/");
   };
 
-  const markVocabCompletion = () => {
-    if (typeof window === "undefined") return;
+  const markVocabCompletion = async () => {
+    if (!lesson?.learningUnitId) return;
 
     try {
-      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!lastSelectionRaw) return;
-
-      const lastSelection = JSON.parse(lastSelectionRaw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
-
-      if (lastSelection.mode !== "vocab") return;
-
-      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      const progress = stored ? JSON.parse(stored) : {};
-
-      if (!progress[lastSelection.sectionId]) {
-        progress[lastSelection.sectionId] = {};
-      }
-      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
-        progress[lastSelection.sectionId][lastSelection.taskId] = {};
-      }
-
-      if (progress[lastSelection.sectionId][lastSelection.taskId].vocab) {
-        setHasMarkedVocabCompletion(true);
-        return;
-      }
-
-      progress[lastSelection.sectionId][lastSelection.taskId].vocab = true;
-      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
-      window.dispatchEvent(new Event(PROGRESS_EVENT));
-      setHasMarkedVocabCompletion(true);
+      await updateProgressOnBackend(lesson.learningUnitId, "vocab");
+      router.push("/");
     } catch (error) {
       console.error("Failed to store vocab completion", error);
     }
-  };
-
-  const markVocabCompletionAndExit = () => {
-    if (hasFlippedAllVocab) {
-      markVocabCompletion();
-    }
-    router.push("/");
   };
 
   const goPrev = () => {
@@ -1183,9 +1146,9 @@ export default function ListeningScreen() {
     setVocabFlipped(false);
   };
 
-  const goNextVocab = () => {
+  const goNextVocab = async () => {
     if (isLastVocabCard) {
-      markVocabCompletionAndExit();
+      await markVocabCompletion();
       return;
     }
     setVocabIndex((prev) => Math.min(prev + 1, vocabCards.length - 1));
@@ -1231,7 +1194,6 @@ export default function ListeningScreen() {
         setVocabIndex(0);
         setVocabFlipped(false);
         setVocabFlippedCardIds(new Set());
-        setHasMarkedVocabCompletion(false);
         setVocabLoading(false);
       })
       .catch((err: unknown) => {
@@ -1247,13 +1209,6 @@ export default function ListeningScreen() {
       mounted = false;
     };
   }, [learningUnitId]);
-
-  useEffect(() => {
-    if (!hasFlippedAllVocab || hasMarkedVocabCompletion) return;
-    queueMicrotask(() => {
-      markVocabCompletion();
-    });
-  }, [hasFlippedAllVocab, hasMarkedVocabCompletion]);
 
   return (
     <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
@@ -1410,13 +1365,13 @@ export default function ListeningScreen() {
 
         <div className="vv-rise-in">
           <p className="text-xs font-semibold text-(--vv-muted)">
-            {lesson?.titleVi ?? "スーパー / レジで支払う"}
+            {headerEyebrow}
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            聞き取り
+            {headerTitle}
           </h1>
           <p className="mt-1 text-xs text-(--vv-muted)">
-            {lesson?.titleJa ?? "会話"}
+            {headerSubtitle}
           </p>
         </div>
 
@@ -1424,7 +1379,6 @@ export default function ListeningScreen() {
           <button
             type="button"
             onClick={() => {
-              updateLastSelectionMode("vocab");
               setActiveTab("vocab");
             }}
             className={`pb-3 transition ${
@@ -1440,7 +1394,9 @@ export default function ListeningScreen() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("listen")}
+            onClick={() => {
+              setActiveTab("listen");
+            }}
             className={`pb-3 transition ${
               activeTab === "listen"
                 ? "relative text-(--vv-accent-strong)"
@@ -1451,53 +1407,6 @@ export default function ListeningScreen() {
             {activeTab === "listen" ? (
               <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
             ) : null}
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 vv-rise-in vv-delay-2">
-          <button
-            type="button"
-            onClick={() => setShowJapanese((prev) => !prev)}
-            aria-pressed={showJapanese}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border)"
-          >
-            {showJapanese ? "日本語" : "日本語を隠す"}
-            <ChevronDownIcon className="h-4 w-4" />
-          </button>
-
-          {/* Speed Control Buttons */}
-          <div className="flex items-center gap-2 rounded-full bg-white ring-1 ring-(--vv-border) p-1">
-            {speeds.map((item) => {
-              const isActive = item === speed;
-              return (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => handleSpeedChange(item)}
-                  title={
-                    item === "0.75x" ? "通常より25%遅い速度" : "通常の速度"
-                  }
-                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    isActive
-                      ? "bg-(--vv-accent-strong) text-white"
-                      : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
-                  }`}
-                >
-                  {item}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Settings Button */}
-          <button
-            type="button"
-            onClick={openSettings}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
-            aria-label="Settings"
-            title="再生設定を開く"
-          >
-            <SettingsIcon className="h-5 w-5 text-(--vv-muted)" />
           </button>
         </div>
 
@@ -1545,6 +1454,52 @@ export default function ListeningScreen() {
 
         {activeTab === "listen" ? (
           <>
+            <div className="flex flex-wrap items-center gap-3 vv-rise-in vv-delay-2">
+              <button
+                type="button"
+                onClick={() => setShowJapanese((prev) => !prev)}
+                aria-pressed={showJapanese}
+                className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border)"
+              >
+                {showJapanese ? "日本語" : "日本語を隠す"}
+                <ChevronDownIcon className="h-4 w-4" />
+              </button>
+
+              {/* Speed Control Buttons */}
+              <div className="flex items-center gap-2 rounded-full bg-white ring-1 ring-(--vv-border) p-1">
+                {speeds.map((item) => {
+                  const isActive = item === speed;
+                  return (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => handleSpeedChange(item)}
+                      title={
+                        item === "0.75x" ? "通常より25%遅い速度" : "通常の速度"
+                      }
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        isActive
+                          ? "bg-(--vv-accent-strong) text-white"
+                          : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Settings Button */}
+              <button
+                type="button"
+                onClick={openSettings}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
+                aria-label="Settings"
+                title="再生設定を開く"
+              >
+                <SettingsIcon className="h-5 w-5 text-(--vv-muted)" />
+              </button>
+            </div>
             <div className="vv-rise-in vv-delay-3">
               <div className="rounded-3xl bg-[#cfeee3] p-4 shadow-[0_12px_24px_rgba(35,70,60,0.12)]">
                 <div className="flex items-center gap-4">
@@ -1779,7 +1734,11 @@ export default function ListeningScreen() {
               </button>
               <button
                 type="button"
-                onClick={goNextVocab}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  goNextVocab();
+                }}
                 className="inline-flex items-center gap-2 rounded-full bg-[#dfe5df] px-4 py-2 text-xs font-semibold text-(--vv-accent-strong) transition"
               >
                 {isLastVocabCard ? "完了" : "次へ"}
