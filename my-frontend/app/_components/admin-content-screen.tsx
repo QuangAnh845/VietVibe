@@ -246,7 +246,10 @@ export default function AdminContentScreen() {
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
-  const defaultAmbientIds = ambientOptions.slice(0, 2).map((item) => item.id);
+  const defaultAmbientIds = useMemo(
+    () => ambientOptions.slice(0, 2).map((item) => item.id),
+    [ambientOptions]
+  );
   const selectedAmbientIds =
     draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
@@ -423,17 +426,9 @@ export default function AdminContentScreen() {
     const lessonAudioUrl = activeLesson?.audio_url || "";
     const lessonDurationSeconds = activeLesson?.duration_seconds ?? 0;
 
-    draftWorkflow.setDraft((currentDraft) => ({
+    draftWorkflow.updateDraft((currentDraft) => ({
       ...currentDraft,
       contentId: `admin-content-${activeUnit.id}`,
-      status:
-        currentDraft.status === "PUBLISHED"
-          ? "PUBLISHED"
-          : currentDraft.publishedAt
-            ? "DRAFT"
-            : activeUnit.status === "published"
-              ? "PUBLISHED"
-              : "DRAFT",
       placeId: activeLocation.id,
       placeNameVi: activeLocation.label,
       placeNameJa: activeLocation.label,
@@ -459,8 +454,8 @@ export default function AdminContentScreen() {
         audioUrl: lessonAudioUrl,
         durationSeconds: lessonDurationSeconds,
         description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-        ambientSoundIds:
-          draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
+      ambientSoundIds:
+          currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
       transcriptLines: [],
       },
     }));
@@ -473,8 +468,6 @@ export default function AdminContentScreen() {
     listeningRows,
     vocabRows,
     defaultAmbientIds,
-    draftWorkflow.draft.listening?.ambientSoundIds,
-    draftWorkflow,
   ]);
 
   useEffect(() => {
