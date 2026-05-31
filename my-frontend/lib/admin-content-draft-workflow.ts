@@ -43,6 +43,7 @@ export type AdminContentDraftPayload = {
     audioUrl?: string;
     durationSeconds?: number;
     description?: string;
+    ambientSoundIds?: string[];
     transcriptLines: AdminDraftTranscriptLine[];
   };
   savedAt?: string;
@@ -279,17 +280,31 @@ async function publishVocabularyCards(
   const createdIds: string[] = [];
 
   for (const card of draft.vocabCards) {
+    const payload = {
+      learning_unit_id: learningUnitId,
+      word_vi: card.term,
+      meaning_ja: card.meaning,
+      example_vi: card.example || null,
+      example_ja: card.exampleJa || null,
+      note: card.note || null,
+      tag: card.type || null,
+    };
+
+    if (card.id) {
+      const result = await api.put<{ data?: { id?: string }; id?: string }>(
+        `/vocabulary/admin/${card.id}`,
+        payload,
+      );
+      const id = result.data?.id || result.id || card.id;
+      if (id) {
+        createdIds.push(id);
+      }
+      continue;
+    }
+
     const result = await api.post<{ data?: { id?: string }; id?: string }>(
       "/vocabulary/admin/create",
-      {
-        learning_unit_id: learningUnitId,
-        word_vi: card.term,
-        meaning_ja: card.meaning,
-        example_vi: card.example || null,
-        example_ja: card.exampleJa || null,
-        note: card.note || null,
-        tag: card.type || null,
-      },
+      payload,
     );
 
     const id = result.data?.id || result.id;
@@ -303,42 +318,15 @@ async function publishVocabularyCards(
 
 async function publishListeningLesson(
   draft: AdminContentDraftPayload,
-  learningUnitId: string,
+  _learningUnitId: string,
 ) {
   const listening = draft.listening;
-  if (!listening || !listening.titleVi.trim() || !listening.audioUrl?.trim()) {
+  if (!listening?.lessonId) {
     return undefined;
   }
 
-  const transcriptLines = listening.transcriptLines.map((line, index, lines) => {
-    const startTime = line.startTime ?? timestampToSeconds(line.timestamp);
-    const nextLine = lines[index + 1];
-    const nextStartTime =
-      nextLine?.startTime ?? timestampToSeconds(nextLine?.timestamp);
-    const endTime = line.endTime ?? Math.max(nextStartTime || startTime + 3, startTime + 1);
-
-    return {
-      startTime,
-      endTime,
-      textVi: line.vi,
-      textJa: line.jp || "",
-    };
-  });
-
-  const lesson = await api.post<{ id?: string; _id?: string }>(
-    "/listening/admin/create",
-    {
-      learningUnitId,
-      titleVi: listening.titleVi,
-      titleJa: listening.titleJa || listening.titleVi,
-      audioUrl: listening.audioUrl,
-      durationSeconds: listening.durationSeconds || 1,
-      description: listening.description || draft.description || null,
-      transcriptLines,
-    },
-  );
-
-  return lesson.id || lesson._id;
+  // Transcript timestamps are managed on /admin/listening — do not overwrite here.
+  return listening.lessonId;
 }
 
 export async function publishAdminContentDraft(
@@ -352,7 +340,18 @@ export async function publishAdminContentDraft(
   const vocabularyCardIds = await publishVocabularyCards(draft, learningUnitId);
   const listeningLessonId = await publishListeningLesson(draft, learningUnitId);
 
-  deleteAdminContentDraftFromBrowser(draft.contentId);
+  if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+    const publishedDraft: AdminContentDraftPayload = {
+      ...draft,
+      status: "PUBLISHED",
+      publishedAt: new Date().toISOString(),
+      savedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(
+      getAdminContentDraftKey(draft.contentId),
+      JSON.stringify(publishedDraft),
+    );
+  }
 
   return {
     placeId,

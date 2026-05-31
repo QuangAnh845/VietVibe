@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -9,12 +10,16 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
   Request,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiBearerAuth,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -22,6 +27,9 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 import { AudioProcessingQueryDto } from './dto/audio-processing-query.dto';
 import { CreateListeningDto } from './dto/create-listening.dto';
 import { CreateLearningUnitDto } from './dto/create-learning-unit.dto';
@@ -33,6 +41,8 @@ import { UpdateListeningDto } from './dto/update-listening.dto';
 import { UpdateListeningSessionDto } from './dto/update-listening-session.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { UpdateSituationDto } from './dto/update-situation.dto';
+import { AdminListeningLessonsQueryDto } from './dto/admin-listening-lessons-query.dto';
+import { UpdateListeningTranscriptDto } from './dto/update-listening-transcript.dto';
 import { ListeningService } from './listening.service';
 import { JwtAuthGuard } from '../login/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../login/guards/roles.guard.js';
@@ -55,6 +65,71 @@ export class ListeningController {
   @ApiCreatedResponse({ description: 'Listening lesson created successfully' })
   createListeningLesson(@Body() createDto: CreateListeningDto) {
     return this.listeningService.createListeningLesson(createDto);
+  }
+
+  @Post('admin/upload-audio')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Upload audio file' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiOkResponse({ description: 'Audio uploaded successfully' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './public/audios',
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const extension = extname(file.originalname).toLowerCase();
+          cb(null, `${uniqueSuffix}${extension}`);
+        },
+      }),
+      limits: {
+        fileSize: 50 * 1024 * 1024,
+      },
+      fileFilter: (req, file, cb) => {
+        const allowedExt = ['.mp3', '.wav', '.m4a'];
+        const allowedMime = [
+          'audio/mpeg',
+          'audio/mp3',
+          'audio/wav',
+          'audio/x-wav',
+          'audio/mp4',
+          'audio/x-m4a',
+        ];
+        const extension = extname(file.originalname).toLowerCase();
+
+        if (!allowedExt.includes(extension) || !allowedMime.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException('Only mp3/wav/m4a files are allowed'),
+            false,
+          );
+        }
+
+        cb(null, true);
+      },
+    }),
+  )
+  uploadAudio(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    return {
+      audioUrl: `/audios/${file.filename}`,
+    };
   }
 
   @Post('admin/places')
@@ -170,6 +245,42 @@ export class ListeningController {
   @ApiOkResponse({ description: 'Learning unit deleted successfully' })
   deleteLearningUnit(@Param('id') id: string) {
     return this.listeningService.deleteLearningUnit(id);
+  }
+
+  @Get('admin/lessons')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] List listening lessons with hierarchy metadata' })
+  @ApiOkResponse({ description: 'List of listening lessons for admin' })
+  getAdminListeningLessons(@Query() query: AdminListeningLessonsQueryDto) {
+    return this.listeningService.getAdminListeningLessons(query);
+  }
+
+  @Get('admin/learning-units-without-lesson')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Learning units without a listening lesson' })
+  @ApiOkResponse({ description: 'Learning units available for new lessons' })
+  getLearningUnitsWithoutLesson() {
+    return this.listeningService.getLearningUnitsWithoutLesson();
+  }
+
+  @Put('admin/:id/transcript')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Update transcript lines and optional audio metadata' })
+  @ApiParam({ name: 'id', description: 'Listening lesson id' })
+  @ApiOkResponse({ description: 'Updated listening lesson with transcript' })
+  @ApiNotFoundResponse({ description: 'Listening lesson not found' })
+  @ApiBadRequestResponse({ description: 'Invalid transcript timestamps' })
+  updateListeningLessonTranscript(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateListeningTranscriptDto,
+  ) {
+    return this.listeningService.updateListeningLessonTranscript(id, updateDto);
   }
 
   @Get('places')

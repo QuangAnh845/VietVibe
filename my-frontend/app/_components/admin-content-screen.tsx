@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { apiCall } from "@/lib/api";
+import type { AdminContentDraftPayload } from "@/lib/admin-content-draft-workflow";
 import { AutoSaveIndicator } from "./auto-save-indicator";
 import { useAdminContentDraftWorkflow } from "../hooks/use-admin-content-draft-workflow";
 import AdminSidebar from "./admin-sidebar";
@@ -33,8 +35,6 @@ type SelectedUnit = {
   locationId: string;
   unitId: string;
 } | null;
-
-type ListeningModal = "replace-audio" | "ambient" | "import-csv" | null;
 
 type ScriptDraft = {
   vi: string;
@@ -148,50 +148,6 @@ const formatDuration = (value?: number) => {
 
 const formatTimestamp = (value?: number) => formatDuration(value ?? 0);
 
-const parseTimestampToSeconds = (value: string) => {
-  const parts = value
-    .split(":")
-    .map((part) => Number(part.trim()))
-    .filter((part) => Number.isFinite(part));
-
-  if (parts.length === 0) return 0;
-  if (parts.length === 1) return Math.max(0, parts[0]);
-  if (parts.length === 2) return Math.max(0, parts[0] * 60 + parts[1]);
-  return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
-};
-
-const buildTranscriptPayload = (
-  rows: ScriptRow[],
-  durationSeconds?: number,
-) => {
-  const startTimes = rows.map((row) => parseTimestampToSeconds(row.timestamp));
-  const fallbackDuration = Number.isFinite(durationSeconds)
-    ? Math.max(0, durationSeconds ?? 0)
-    : undefined;
-
-  return rows.map((row, index) => {
-    const startTime = startTimes[index] ?? 0;
-    const nextStart = startTimes[index + 1];
-    const rawEnd =
-      row.endTimeSeconds ??
-      (Number.isFinite(nextStart) ? (nextStart as number) : undefined);
-    let endTime = Number.isFinite(rawEnd)
-      ? (rawEnd as number)
-      : (fallbackDuration ?? startTime + 1);
-
-    if (endTime <= startTime) {
-      endTime = startTime + 1;
-    }
-
-    return {
-      startTime,
-      endTime,
-      textVi: row.vi,
-      textJa: row.jp || undefined,
-    };
-  });
-};
-
 const normalizeVocabRows = (rows: VocabRow[]) =>
   rows.map((row, index) => ({
     ...row,
@@ -205,12 +161,11 @@ const getAudioFileName = (url?: string) => {
 };
 
 export default function AdminContentScreen() {
+  const router = useRouter();
   const [isSidebarOpen] = useState(true);
   const [isContentSidebarOpen, setIsContentSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<"vocab" | "listening">("vocab");
   const [expandedIds, setExpandedIds] = useState<string[]>(["super"]);
   const [selectedUnit, setSelectedUnit] = useState<SelectedUnit>(null);
-  const [listeningModal, setListeningModal] = useState<ListeningModal>(null);
   const [contentQuery, setContentQuery] = useState("");
   const [ambientQuery, setAmbientQuery] = useState("");
   const [editingRow, setEditingRow] = useState<string | null>(null);
@@ -240,7 +195,6 @@ export default function AdminContentScreen() {
   const [isContentLoading, setIsContentLoading] = useState(true);
   const [contentError, setContentError] = useState<string | null>(null);
   const [ambientOptions, setAmbientOptions] = useState<AmbientOption[]>([]);
-  const [selectedAmbientIds, setSelectedAmbientIds] = useState<string[]>([]);
   const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
   const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState({
@@ -292,71 +246,9 @@ export default function AdminContentScreen() {
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
-
-  const applyListeningLesson = (lesson: ListeningLessonResponse) => {
-    const transcriptLines = Array.isArray(lesson.transcriptLines)
-      ? lesson.transcriptLines
-      : [];
-    const nextListeningRows = transcriptLines.map((line, index) => ({
-      index: String(index + 1),
-      vi: line.text_vi ?? "",
-      jp: line.text_ja ?? "",
-      timestamp: formatTimestamp(line.start_time ?? 0),
-      endTimeSeconds: line.end_time,
-    }));
-
-    setActiveLesson(lesson);
-    setListeningRows(nextListeningRows);
-  };
-
-  const persistListeningRows = async (nextRows: ScriptRow[]) => {
-    if (!activeLessonId) {
-      setDetailError("Chưa có bài nghe để cập nhật.");
-      return false;
-    }
-
-    setSaveStatus("saving");
-    setDetailError(null);
-
-    try {
-      const updated = await apiCall<ListeningLessonResponse>(
-        `/listening/${activeLessonId}`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            transcriptLines: buildTranscriptPayload(
-              nextRows,
-              activeLesson?.duration_seconds,
-            ),
-          }),
-        },
-      );
-
-      applyListeningLesson(updated);
-      setLocationsState((prev) =>
-        prev.map((location) => ({
-          ...location,
-          units: location.units.map((unit) =>
-            unit.id === activeUnitId
-              ? {
-                  ...unit,
-                  listeningCount: nextRows.length,
-                }
-              : unit,
-          ),
-        })),
-      );
-      setSaveStatus("saved");
-      return true;
-    } catch (error) {
-      console.error("Failed to update listening lesson", error);
-      setSaveStatus("error");
-      setDetailError(
-        error instanceof Error ? error.message : "Không thể lưu bài nghe.",
-      );
-      return false;
-    }
-  };
+  const defaultAmbientIds = ambientOptions.slice(0, 2).map((item) => item.id);
+  const selectedAmbientIds =
+    draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
   const filteredLocations = useMemo(() => {
     const normalized = contentQuery.trim().toLowerCase();
@@ -399,7 +291,6 @@ export default function AdminContentScreen() {
 
         if (isMounted) {
           setAmbientOptions(options);
-          setSelectedAmbientIds(options.slice(0, 2).map((item) => item.id));
         }
       } catch (error) {
         console.error("Failed to load environment sounds", error);
@@ -535,43 +426,54 @@ export default function AdminContentScreen() {
     draftWorkflow.setDraft((currentDraft) => ({
       ...currentDraft,
       contentId: `admin-content-${activeUnit.id}`,
-      status: activeUnit.status === "published" ? "PUBLISHED" : "DRAFT",
+      status:
+        currentDraft.status === "PUBLISHED"
+          ? "PUBLISHED"
+          : currentDraft.publishedAt
+            ? "DRAFT"
+            : activeUnit.status === "published"
+              ? "PUBLISHED"
+              : "DRAFT",
       placeId: activeLocation.id,
       placeNameVi: activeLocation.label,
       placeNameJa: activeLocation.label,
       situationId: activeUnit.id,
       situationTitleVi: activeUnit.title,
       situationTitleJa: activeUnit.title,
+      learningUnitId: activeLearningUnitId ?? undefined,
       titleVi: lessonTitleVi,
       titleJa: lessonTitleJa,
       description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
       vocabCards: vocabRows.map((row) => ({
-        id: row.index,
+        id: row.id,
         term: row.term,
         type: row.type,
         meaning: row.meaning,
         example: row.example,
+        note: row.pronunciation,
       })),
       listening: {
+        lessonId: activeLessonId ?? undefined,
         titleVi: lessonTitleVi,
         titleJa: lessonTitleJa,
         audioUrl: lessonAudioUrl,
         durationSeconds: lessonDurationSeconds,
         description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-        transcriptLines: listeningRows.map((row) => ({
-          id: row.index,
-          vi: row.vi,
-          jp: row.jp,
-          timestamp: row.timestamp,
-        })),
+        ambientSoundIds:
+          draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
+      transcriptLines: [],
       },
     }));
   }, [
     activeLocation,
     activeUnit,
     activeLesson,
+    activeLessonId,
+    activeLearningUnitId,
     listeningRows,
     vocabRows,
+    defaultAmbientIds,
+    draftWorkflow.draft.listening?.ambientSoundIds,
     draftWorkflow,
   ]);
 
@@ -663,7 +565,67 @@ export default function AdminContentScreen() {
     setIsAddingRow(false);
   };
 
-  const saveNewRow = async () => {
+  const applyLocalListeningRows = (nextRows: ScriptRow[]) => {
+    setListeningRows(nextRows);
+    setLocationsState((prev) =>
+      prev.map((location) => ({
+        ...location,
+        units: location.units.map((unit) =>
+          unit.id === activeUnitId
+            ? {
+                ...unit,
+                listeningCount: nextRows.length,
+              }
+            : unit,
+        ),
+      })),
+    );
+  };
+
+  const buildCurrentDraftSnapshot = (): AdminContentDraftPayload => ({
+    ...draftWorkflow.draft,
+    contentId: `admin-content-${activeUnit?.id ?? draftWorkflow.draft.contentId}`,
+    status:
+      draftWorkflow.draft.status === "PUBLISHED"
+        ? "PUBLISHED"
+        : "DRAFT",
+    placeId: activeLocation?.id ?? draftWorkflow.draft.placeId,
+    placeNameVi: activeLocation?.label ?? draftWorkflow.draft.placeNameVi,
+    placeNameJa: activeLocation?.label ?? draftWorkflow.draft.placeNameJa,
+    situationId: activeUnit?.id ?? draftWorkflow.draft.situationId,
+    situationTitleVi: activeUnit?.title ?? draftWorkflow.draft.situationTitleVi,
+    situationTitleJa: activeUnit?.title ?? draftWorkflow.draft.situationTitleJa,
+    learningUnitId: activeLearningUnitId ?? draftWorkflow.draft.learningUnitId,
+    titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.titleVi,
+    titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.titleJa,
+    description:
+      draftWorkflow.draft.description ||
+      `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit?.title ?? ""}.`,
+    vocabCards: vocabRows.map((row) => ({
+      id: row.id,
+      term: row.term,
+      type: row.type,
+      meaning: row.meaning,
+      example: row.example,
+      note: row.pronunciation,
+    })),
+    listening: {
+      lessonId: activeLessonId ?? draftWorkflow.draft.listening?.lessonId,
+      titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.listening?.titleVi || "",
+      titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.listening?.titleJa || "",
+      audioUrl: activeLesson?.audio_url || draftWorkflow.draft.listening?.audioUrl || "",
+      durationSeconds:
+        activeLesson?.duration_seconds ?? draftWorkflow.draft.listening?.durationSeconds ?? 0,
+      description:
+        draftWorkflow.draft.listening?.description ||
+        `Bài nghe cho tình huống ${activeUnit?.title ?? ""}.`,
+      ambientSoundIds:
+        draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
+      transcriptLines: [],
+    },
+  });
+
+  const saveNewRow = () => {
     const nextRows = [
       ...listeningRows,
       {
@@ -674,10 +636,8 @@ export default function AdminContentScreen() {
       },
     ];
 
-    const success = await persistListeningRows(nextRows);
-    if (success) {
-      resetNewRow();
-    }
+    applyLocalListeningRows(nextRows);
+    resetNewRow();
   };
 
   const handleCopyTimestamp = async (rowIndex: string, value: string) => {
@@ -691,12 +651,31 @@ export default function AdminContentScreen() {
   };
 
   const toggleAmbientSelection = (id: string) => {
-    setSelectedAmbientIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
-    );
+    draftWorkflow.setDraft((currentDraft) => {
+      const currentAmbientIds =
+        currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
+      const nextAmbientIds = currentAmbientIds.includes(id)
+        ? currentAmbientIds.filter((item) => item !== id)
+        : [...currentAmbientIds, id];
+
+      return {
+        ...currentDraft,
+        listening: {
+          ...(currentDraft.listening ?? {
+            titleVi: "",
+            titleJa: "",
+            audioUrl: "",
+            durationSeconds: 0,
+            description: "",
+            transcriptLines: [],
+          }),
+          ambientSoundIds: nextAmbientIds,
+        },
+      };
+    });
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = () => {
     if (!deleteRow) {
       return;
     }
@@ -705,10 +684,8 @@ export default function AdminContentScreen() {
       .filter((row) => row.index !== deleteRow)
       .map((row, index) => ({ ...row, index: String(index + 1) }));
 
-    const success = await persistListeningRows(nextRows);
-    if (success) {
-      setDeleteRow(null);
-    }
+    applyLocalListeningRows(nextRows);
+    setDeleteRow(null);
   };
 
   const handlePublishActiveUnit = async () => {
@@ -719,7 +696,7 @@ export default function AdminContentScreen() {
     setSaveStatus("saving");
 
     try {
-      await draftWorkflow.publish();
+      await draftWorkflow.publish(buildCurrentDraftSnapshot());
       setLocationsState((prev) =>
         prev.map((location) =>
           location.id === activeLocation.id
@@ -1056,7 +1033,21 @@ export default function AdminContentScreen() {
                                     >
                                       <TrashIcon className="h-4 w-4" />
                                     </IconButton>
-                                    <StatusDot status={location.status} />
+                                    <StatusDot
+                                      status={
+                                        location.units.some(
+                                          (unit) => unit.id === activeUnit?.id,
+                                        ) && draftWorkflow.draft.status ===
+                                          "PUBLISHED"
+                                          ? "published"
+                                          : location.units.some(
+                                                (unit) =>
+                                                  unit.id === activeUnit?.id,
+                                              ) && draftWorkflow.draft.publishedAt
+                                            ? "draft"
+                                            : location.status
+                                      }
+                                    />
                                   </div>
                                 </div>
 
@@ -1096,7 +1087,16 @@ export default function AdminContentScreen() {
                                         >
                                           <span>{unit.title}</span>
                                           <StatusDot
-                                            status={unit.status}
+                                            status={
+                                              unit.id === activeUnit?.id
+                                                ? draftWorkflow.draft.status ===
+                                                  "PUBLISHED"
+                                                  ? "published"
+                                                  : draftWorkflow.draft.publishedAt
+                                                    ? "draft"
+                                                    : "draft"
+                                                : unit.status
+                                            }
                                             ariaLabel="Edit situation"
                                             onClick={(event) => {
                                               event.stopPropagation();
@@ -1170,9 +1170,13 @@ export default function AdminContentScreen() {
                           <AutoSaveIndicator
                             status={draftWorkflow.autoSaveStatus}
                           />
-                          {activeUnit?.status === "published" ? (
+                          {draftWorkflow.draft.status === "PUBLISHED" ? (
                             <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
                               Đã xuất bản
+                            </span>
+                          ) : draftWorkflow.draft.publishedAt ? (
+                            <span className="rounded-full border border-[#f4b24f] bg-[#fdf6e3] px-3 py-2 text-[11px] font-semibold text-[#b4771e]">
+                              Nháp
                             </span>
                           ) : (
                             <span className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#b4771e] border border-[#f4b24f] bg-[#fdf6e3]">
@@ -1200,31 +1204,11 @@ export default function AdminContentScreen() {
                     </div>
 
                     <div className=" flex items-center gap-4 border-b px-8 pt-4 border-[#eef2ee] text-sm font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("vocab")}
-                        className={`pb-4 ${
-                          activeTab === "vocab"
-                            ? "border-b-2 border-[#2f5d50]"
-                            : "text-[#7b8b83]"
-                        }`}
-                      >
+                      <span className="border-b-2 border-[#2f5d50] pb-4">
                         Từ vựng
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("listening")}
-                        className={`pb-4 ${
-                          activeTab === "listening"
-                            ? "border-b-2 border-[#2f5d50]"
-                            : "text-[#7b8b83]"
-                        }`}
-                      >
-                        Bài nghe
-                      </button>
+                      </span>
                     </div>
                     <main className="px-8 pt-4">
-                      {activeTab === "vocab" ? (
                         <div>
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-semibold">
@@ -1352,352 +1336,36 @@ export default function AdminContentScreen() {
                               dụ câu tiếng Việt và ghi chú (mặt sau flashcard)
                             </span>
                           </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="rounded-2xl bg-[#36584e] px-4 py-5 text-white">
-                            <div className="flex items-center gap-3">
-                              <button
-                                type="button"
-                                className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50]"
-                              >
-                                <PlayIcon className="h-4 w-4" />
-                              </button>
-                              <div className="flex-1">
-                                <div className="h-2 w-full rounded-full bg-[#5f7a71]">
-                                  <div className="h-full w-[65%] rounded-full bg-[#d7f0e5]" />
-                                </div>
-                              </div>
-                              <div className="text-xs text-[#d7f0e5]">
-                                0:00 / {activeDurationLabel}{" "}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setListeningModal("replace-audio")
-                                  }
-                                  className="underline"
-                                >
-                                  Thay file
-                                </button>
-                              </div>
-                            </div>
-                          </div>
 
-                          {detailLoading ? (
-                            <p className="mt-3 text-[11px] text-[#7b8b83]">
-                              Đang tải dữ liệu bài nghe...
+                          <div className="mt-6 rounded-2xl border border-[#eef2ee] bg-[#f8faf7] px-5 py-4">
+                            <p className="text-sm font-semibold text-[#1f2b27]">
+                              Bài nghe & Timestamp
                             </p>
-                          ) : null}
-
-                          <div className="mt-3 py-4 flex items-center gap-2 text-[11px] text-[#7b8b83]">
-                            <ClockIcon className="h-4 w-4" />
-                            <span>
-                              Bấm nút đồng hồ ở từng dòng để tự điền timestamp
-                              tại vị trí đang phát
-                            </span>
-                          </div>
-
-                          {detailError ? (
-                            <p className="text-[11px] text-[#c65d5d]">
-                              {detailError}
+                            <p className="mt-2 text-[11px] text-[#7b8b83]">
+                              Upload file audio và gán thời gian cho từng câu
+                              thoại tại màn quản lý bài nghe riêng.
                             </p>
-                          ) : null}
-
-                          <div className="mt-6">
-                            <p className="text-sm font-semibold">
-                              Âm thanh môi trường
+                            <p className="mt-2 text-[11px] text-[#9aa8a2]">
+                              {listeningRows.length > 0
+                                ? `${listeningRows.length} câu đã có trong bài (chỉ xem tại màn bài nghe)`
+                                : activeLessonId
+                                  ? "Đã có bài nghe — mở trình chỉnh timestamp"
+                                  : "Chưa có bài nghe cho tình huống này"}
                             </p>
-                            <div className="mt-2 flex items-center gap-2 rounded-2xl border border-[#eef2ee] bg-white px-3 py-2 text-xs text-[#7b8b83]">
-                              {selectedAmbientOptions.length > 0 ? (
-                                selectedAmbientOptions.map((option) => (
-                                  <span
-                                    key={option.id}
-                                    className="flex items-center gap-1 rounded-full bg-(--vv-accent-soft) px-3 py-1 text-[#2f5d50]"
-                                  >
-                                    {option.title}
-                                    <span className="text-[#7b8b83]">×</span>
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="text-[#9aa8a2]">
-                                  Chưa chọn
-                                </span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => setListeningModal("ambient")}
-                                className="text-[#9aa8a2]"
-                              >
-                                + Thêm...
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="mt-6">
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold">
-                                Script hội thoại {listeningRows.length} câu
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setListeningModal("import-csv")
-                                  }
-                                  className="rounded-full border border-[#dfe6df] px-3 py-1 text-[11px] font-semibold text-[#7b8b83]"
-                                >
-                                  Import CSV
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded-full bg-[#2f5d50] px-3 py-1 text-[11px] font-semibold text-white"
-                                  onClick={() => {
-                                    setIsAddingRow(true);
-                                    setNewRow({
-                                      vi: "",
-                                      jp: "",
-                                      timestamp: "0:00",
-                                    });
-                                  }}
-                                >
-                                  + Thêm câu
-                                </button>
-                              </div>
-                            </div>
-
-                            {detailLoading ? (
-                              <div className="mt-3 rounded-2xl border border-[#eef2ee] px-4 py-6 text-center text-[11px] text-[#7b8b83]">
-                                Đang tải...
-                              </div>
-                            ) : (
-                              <div className="mt-3 overflow-hidden rounded-2xl border border-[#eef2ee]">
-                                <table className="w-full text-left text-[11px]">
-                                  <thead className="bg-[#f8faf7] text-[#7b8b83]">
-                                    <tr>
-                                      <th className="px-4 py-3">#</th>
-                                      <th className="px-4 py-3">Tiếng Việt</th>
-                                      <th className="px-4 py-3">Tiếng Nhật</th>
-                                      <th className="px-4 py-3">Timestamp</th>
-                                      <th className="px-4 py-3"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="text-[#1f2b27]">
-                                    {listeningRows.map((row) => (
-                                      <tr
-                                        key={row.index}
-                                        className={`border-t border-[#eef2ee] ${
-                                          editingRow === row.index
-                                            ? "bg-[#eaf6ef]"
-                                            : ""
-                                        }`}
-                                      >
-                                        <td className="px-4 py-3">
-                                          {row.index}
-                                        </td>
-                                        {editingRow === row.index ? (
-                                          <>
-                                            <td className="px-4 py-3">
-                                              <input
-                                                value={editDraft.vi}
-                                                onChange={(event) =>
-                                                  setEditDraft((prev) => ({
-                                                    ...prev,
-                                                    vi: event.target.value,
-                                                  }))
-                                                }
-                                                placeholder="Nhập câu tiếng Việt..."
-                                                className="h-9 w-full rounded-xl border border-(--vv-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
-                                              />
-                                            </td>
-                                            <td className="px-4 py-3">
-                                              <input
-                                                value={editDraft.jp}
-                                                onChange={(event) =>
-                                                  setEditDraft((prev) => ({
-                                                    ...prev,
-                                                    jp: event.target.value,
-                                                  }))
-                                                }
-                                                placeholder="Nhập câu tiếng Nhật..."
-                                                className="h-9 w-full rounded-xl border border-(--vv-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
-                                              />
-                                            </td>
-                                            <td className="px-4 py-3">
-                                              <div className="flex items-center gap-2">
-                                                <input
-                                                  value={editDraft.timestamp}
-                                                  onChange={(event) =>
-                                                    setEditDraft((prev) => ({
-                                                      ...prev,
-                                                      timestamp:
-                                                        event.target.value,
-                                                    }))
-                                                  }
-                                                  className="h-9 w-16 rounded-xl border border-(--var-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
-                                                />
-                                                <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
-                                              </div>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                              <div className="flex items-center gap-2">
-                                                <IconButton
-                                                  ariaLabel="Save"
-                                                  onClick={async () => {
-                                                    const nextRows =
-                                                      listeningRows.map(
-                                                        (item) =>
-                                                          item.index ===
-                                                          row.index
-                                                            ? {
-                                                                ...item,
-                                                                vi: editDraft.vi,
-                                                                jp: editDraft.jp,
-                                                                timestamp:
-                                                                  editDraft.timestamp,
-                                                              }
-                                                            : item,
-                                                      );
-
-                                                    const success =
-                                                      await persistListeningRows(
-                                                        nextRows,
-                                                      );
-                                                    if (success) {
-                                                      setEditingRow(null);
-                                                    }
-                                                  }}
-                                                  className="border-[#a9d7c1] bg-white text-[#2f5d50]"
-                                                >
-                                                  <CheckIcon className="h-4 w-4" />
-                                                </IconButton>
-                                                <IconButton
-                                                  ariaLabel="Cancel"
-                                                  onClick={cancelEditRow}
-                                                  className="border-[#f0c3c3] bg-white text-[#c65d5d]"
-                                                >
-                                                  <CloseIcon className="h-4 w-4" />
-                                                </IconButton>
-                                              </div>
-                                            </td>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <td className="px-4 py-3">
-                                              {row.vi}
-                                            </td>
-                                            <td className="px-4 py-3">
-                                              {row.jp}
-                                            </td>
-                                            <td className="px-4 py-3">
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  handleCopyTimestamp(
-                                                    row.index,
-                                                    row.timestamp,
-                                                  )
-                                                }
-                                                className="flex items-center gap-2"
-                                              >
-                                                <span>{row.timestamp}</span>
-                                                <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
-                                              </button>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                              <div className="flex items-center gap-2">
-                                                <IconButton
-                                                  ariaLabel="Edit"
-                                                  onClick={() =>
-                                                    startEditRow(row)
-                                                  }
-                                                >
-                                                  <EditIcon className="h-4 w-4" />
-                                                </IconButton>
-                                                <IconButton
-                                                  ariaLabel="Delete"
-                                                  onClick={() =>
-                                                    setDeleteRow(row.index)
-                                                  }
-                                                >
-                                                  <TrashIcon className="h-4 w-4 text-[#d46b6b]" />
-                                                </IconButton>
-                                              </div>
-                                            </td>
-                                          </>
-                                        )}
-                                      </tr>
-                                    ))}
-                                    {isAddingRow ? (
-                                      <tr className="border-t border-[#eef2ee] bg-[#eaf6ef]">
-                                        <td className="px-4 py-3">5</td>
-                                        <td className="px-4 py-3">
-                                          <input
-                                            value={newRow.vi}
-                                            onChange={(event) =>
-                                              setNewRow((prev) => ({
-                                                ...prev,
-                                                vi: event.target.value,
-                                              }))
-                                            }
-                                            placeholder="Nhập câu tiếng Việt..."
-                                            className="h-9 w-full rounded-xl border border-(--var-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
-                                          />
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <input
-                                            value={newRow.jp}
-                                            onChange={(event) =>
-                                              setNewRow((prev) => ({
-                                                ...prev,
-                                                jp: event.target.value,
-                                              }))
-                                            }
-                                            placeholder="Nhập câu tiếng Nhật..."
-                                            className="h-9 w-full rounded-xl border border-(--var-accent) bg-white px-3 text-[11px] text-[#1f2b27] focus:outline-none"
-                                          />
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <div className="flex items-center gap-2">
-                                            <input
-                                              value={newRow.timestamp}
-                                              onChange={(event) =>
-                                                setNewRow((prev) => ({
-                                                  ...prev,
-                                                  timestamp: event.target.value,
-                                                }))
-                                              }
-                                              className="h-9 w-16 rounded-xl border border-(--vv-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
-                                            />
-                                            <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <div className="flex items-center gap-2">
-                                            <IconButton
-                                              ariaLabel="Save"
-                                              className="border-[#a9d7c1] bg-white text-[#2f5d50]"
-                                              onClick={saveNewRow}
-                                            >
-                                              <CheckIcon className="h-4 w-4" />
-                                            </IconButton>
-                                            <IconButton
-                                              ariaLabel="Cancel"
-                                              className="border-[#f0c3c3] bg-white text-[#c65d5d]"
-                                              onClick={resetNewRow}
-                                            >
-                                              <CloseIcon className="h-4 w-4" />
-                                            </IconButton>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ) : null}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const query = activeLearningUnitId
+                                  ? `?learningUnitId=${activeLearningUnitId}`
+                                  : "";
+                                router.push(`/admin/listening${query}`);
+                              }}
+                              className="mt-4 rounded-full bg-[#2f5d50] px-4 py-2 text-[11px] font-semibold text-white"
+                            >
+                              Mở Bài nghe & Timestamp →
+                            </button>
                           </div>
                         </div>
-                      )}
                     </main>
                   </div>
                 ) : (
@@ -1720,228 +1388,6 @@ export default function AdminContentScreen() {
           </div>
         </main>
       </div>
-
-      {listeningModal === "replace-audio" ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 px-6"
-          onClick={() => setListeningModal(null)}
-        >
-          <div
-            className="w-full max-w-2xl rounded-3xl bg-white shadow-[0_20px_40px_rgba(0,0,0,0.18)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-[#f0f2f0] px-6 py-4">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <UploadIcon className="h-4 w-4 text-[#2f5d50]" />
-                Thay file audio
-              </div>
-              <button
-                type="button"
-                onClick={() => setListeningModal(null)}
-                className="text-[#9aa8a2]"
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="px-6 pb-6 pt-4 text-xs text-[#7b8b83]">
-              <div className="space-y-3">
-                <p className="text-[11px] font-semibold text-[#9aa8a2]">
-                  FILE HIỆN TẠI
-                </p>
-                <div className="flex items-center justify-between rounded-2xl bg-[#f7f9f7] px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#d7f0e5] text-[#2f5d50]">
-                      <VolumeIcon className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-[#1f2b27]">
-                        {activeAudioFileName}
-                      </p>
-                      <p className="text-[11px] text-[#9aa8a2]">
-                        {activeDurationLabel} · Nguồn backend
-                      </p>
-                    </div>
-                  </div>
-                  <span className="rounded-full bg-[#e7f1ed] px-3 py-1 text-[11px] font-semibold text-[#2f5d50]">
-                    Đang dùng
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-5 space-y-3">
-                <p className="text-[11px] font-semibold text-[#9aa8a2]">
-                  FILE MỚI
-                </p>
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-7 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef2ee] text-[#7b8b83]">
-                    <UploadIcon className="h-5 w-5" />
-                  </div>
-                  <p className="mt-4 text-xs text-[#7b8b83]">
-                    Kéo thả file vào đây hoặc{" "}
-                    <span className="font-semibold text-[#2f5d50]">
-                      chọn file
-                    </span>
-                  </p>
-                  <p className="mt-2 text-[11px] text-[#9aa8a2]">
-                    MP3, WAV, M4A · Tối đa 50MB
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#f1d6a7] bg-[#fff8e8] px-4 py-3 text-[11px] text-[#b4771e]">
-                <WarningIcon className="mt-0.5 h-4 w-4" />
-                <p>
-                  Thay file audio sẽ xóa toàn bộ timestamp trong script hiện
-                  tại. Bạn cần gán lại timestamp sau khi thay file mới lên.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-4 border-t border-[#f0f2f0] px-6 py-4">
-              <button
-                type="button"
-                onClick={() => setListeningModal(null)}
-                className="text-sm font-semibold text-[#7b8b83]"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-[#b6c4bf] px-4 py-2 text-xs font-semibold text-white"
-              >
-                <UploadIcon className="h-4 w-4" />
-                Xác nhận thay
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {listeningModal === "ambient" ? (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/25 px-6 pt-20"
-          onClick={() => setListeningModal(null)}
-        >
-          <div
-            className="w-full max-w-2xl rounded-3xl bg-white shadow-[0_20px_40px_rgba(0,0,0,0.18)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="border-b border-[#f0f2f0] px-6 py-4">
-              <p className="text-sm font-semibold">Âm thanh môi trường</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[#d7dfd9] bg-white px-3 py-2 text-xs text-[#7b8b83]">
-                {selectedAmbientOptions.length > 0 ? (
-                  selectedAmbientOptions.map((option) => (
-                    <span
-                      key={option.id}
-                      className="flex items-center gap-2 rounded-full bg-[#d7f0e5] px-3 py-1 text-[#2f5d50]"
-                    >
-                      {option.title} <span className="text-[#7b8b83]">×</span>
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-[#9aa8a2]">Chưa chọn</span>
-                )}
-              </div>
-              <div className="mt-3 flex items-center gap-2 rounded-2xl border border-[#e6ece6] bg-[#f7f9f7] px-4 py-2 text-xs text-[#9aa8a2]">
-                <SearchIcon className="h-4 w-4" />
-                <input
-                  value={ambientQuery}
-                  onChange={(event) => setAmbientQuery(event.target.value)}
-                  placeholder="Tìm âm thanh..."
-                  className="w-full bg-transparent text-xs text-[#1f2b27] placeholder:text-[#9aa8a2] focus:outline-none"
-                />
-              </div>
-            </div>
-            <div className="px-6 py-4 text-xs">
-              <div className="space-y-3">
-                {filteredAmbientOptions.map((item) => (
-                  <label
-                    key={item.id}
-                    className="flex items-start gap-3 text-[#1f2b27]"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedAmbientIds.includes(item.id)}
-                      onChange={() => toggleAmbientSelection(item.id)}
-                      className="peer sr-only"
-                    />
-                    <span className="mt-1 flex h-4 w-4 items-center justify-center rounded-md border border-[#cfe1d8] bg-white text-transparent peer-checked:border-[#2f5d50] peer-checked:bg-[#2f5d50] peer-checked:text-white">
-                      <CheckIcon className="h-3 w-3" />
-                    </span>
-                    <div>
-                      <p className="text-sm font-semibold">{item.title}</p>
-                      <p className="text-[11px] text-[#9aa8a2]">
-                        {item.filename} · {item.duration}
-                      </p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {listeningModal === "import-csv" ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 px-6"
-          onClick={() => setListeningModal(null)}
-        >
-          <div
-            className="w-full max-w-lg rounded-3xl bg-white shadow-[0_20px_40px_rgba(0,0,0,0.18)]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-[#f0f2f0] px-6 py-4">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <UploadIcon className="h-4 w-4 text-[#2f5d50]" />
-                Import CSV hội thoại
-              </div>
-              <button
-                type="button"
-                onClick={() => setListeningModal(null)}
-                className="text-[#9aa8a2]"
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-            <div className="px-6 pb-6 pt-5">
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9]  px-6 py-10 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef2ee] text-[#7b8b83]">
-                  <FileIcon className="h-5 w-5" />
-                </div>
-                <p className="mt-4 text-xs text-[#7b8b83]">
-                  Kéo thả vào đây hoặc{" "}
-                  <span className="font-semibold text-[#2f5d50]">
-                    chọn file
-                  </span>
-                </p>
-                <p className="mt-2 text-[11px] text-[#9aa8a2]">
-                  Định dạng: câu_tiếng_việt, câu_tiếng_nhật, timestamp
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-4 border-t border-[#f0f2f0] px-6 py-4">
-              <button
-                type="button"
-                onClick={() => setListeningModal(null)}
-                className="text-sm font-semibold text-[#7b8b83]"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-[#b6c4bf] px-4 py-2 text-xs font-semibold text-white"
-              >
-                <UploadIcon className="h-4 w-4" />
-                Import
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {isVocabImportOpen ? (
         <div
