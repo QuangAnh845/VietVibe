@@ -99,6 +99,10 @@ export default function AdminSidebar({ active }: AdminSidebarProps) {
             type="button"
             onClick={() => {
               if (typeof window !== "undefined") {
+                localStorage.removeItem("access_token");
+                localStorage.removeItem("auth_token");
+                localStorage.removeItem("refresh_token");
+                localStorage.removeItem("user");
                 localStorage.removeItem("vietvibe_auth");
               }
               router.push("/login");

@@ -1,5 +1,25 @@
-import { Controller, Get, Param, Query, Post, Body, Put, Delete, UseGuards, Request, HttpCode } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiTags, ApiBearerAuth, ApiResponse, ApiCreatedResponse } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Post,
+  Body,
+  Put,
+  Delete,
+  UseGuards,
+  Request,
+  HttpCode,
+} from '@nestjs/common';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiTags,
+  ApiBearerAuth,
+  ApiResponse,
+  ApiCreatedResponse,
+} from '@nestjs/swagger';
 import { GetVocabularyListQueryDto } from './dto/get-vocabulary-list.query';
 import { CreateVocabularyDto } from './dto/create-vocabulary.dto';
 import { UpdateVocabularyDto } from './dto/update-vocabulary.dto';
@@ -42,7 +62,10 @@ export class VocabularyController {
     description: 'Only admin can create new vocabulary cards',
   })
   @ApiCreatedResponse({ description: 'Vocabulary card created successfully' })
-  async createVocabulary(@Body() createDto: CreateVocabularyDto, @Request() req: any) {
+  async createVocabulary(
+    @Body() createDto: CreateVocabularyDto,
+    @Request() req: any,
+  ) {
     return this.vocabularyService.createVocabulary(createDto);
   }
 

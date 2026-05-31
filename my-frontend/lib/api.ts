@@ -2,6 +2,7 @@ import { ErrorHandler } from './error-handler';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 const TOKEN_KEY = 'access_token';
+const LEGACY_TOKEN_KEY = 'auth_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
 interface FetchOptions extends RequestInit {
@@ -15,6 +16,15 @@ interface FetchOptions extends RequestInit {
 function getStoredToken(key: string): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(key);
+}
+
+function getAccessToken(): string | null {
+  if (typeof window === 'undefined') return null;
+
+  return (
+    localStorage.getItem(TOKEN_KEY) ||
+    localStorage.getItem(LEGACY_TOKEN_KEY)
+  );
 }
 
 /**
@@ -40,7 +50,7 @@ export async function apiFetch<T>(
 
   // Add Bearer token if not skipped
   if (!skipAuth) {
-    const token = getStoredToken(TOKEN_KEY);
+    const token = getAccessToken();
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     }
@@ -87,6 +97,7 @@ export async function apiFetch<T>(
 
           // Store new tokens in localStorage
           setStoredToken(TOKEN_KEY, newAccessToken);
+          setStoredToken(LEGACY_TOKEN_KEY, newAccessToken);
           setStoredToken(REFRESH_TOKEN_KEY, newRefreshToken);
 
           // Retry original request with new token

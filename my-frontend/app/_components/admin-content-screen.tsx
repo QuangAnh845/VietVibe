@@ -582,6 +582,23 @@ export default function AdminContentScreen() {
     );
   };
 
+  const applyLocalVocabRows = (nextRows: VocabRow[]) => {
+    setVocabRows(nextRows);
+    setLocationsState((prev) =>
+      prev.map((location) => ({
+        ...location,
+        units: location.units.map((unit) =>
+          unit.id === activeUnitId
+            ? {
+                ...unit,
+                vocabCount: nextRows.length,
+              }
+            : unit,
+        ),
+      })),
+    );
+  };
+
   const buildCurrentDraftSnapshot = (): AdminContentDraftPayload => ({
     ...draftWorkflow.draft,
     contentId: `admin-content-${activeUnit?.id ?? draftWorkflow.draft.contentId}`,
@@ -696,7 +713,16 @@ export default function AdminContentScreen() {
     setSaveStatus("saving");
 
     try {
-      await draftWorkflow.publish(buildCurrentDraftSnapshot());
+      const publishResult = await draftWorkflow.publish(buildCurrentDraftSnapshot());
+      const vocabularyCardIds = publishResult.vocabularyCardIds;
+      if (vocabularyCardIds.length > 0) {
+        setVocabRows((currentRows) =>
+          currentRows.map((row, index) => ({
+            ...row,
+            id: vocabularyCardIds[index] ?? row.id,
+          })),
+        );
+      }
       setLocationsState((prev) =>
         prev.map((location) =>
           location.id === activeLocation.id
@@ -731,123 +757,51 @@ export default function AdminContentScreen() {
     window.setTimeout(() => setLocationToast(null), 3000);
   };
 
-  const handleSaveVocab = async () => {
+  const handleSaveVocab = () => {
     if (!activeLearningUnitId) {
       setVocabToast("Chưa có learning unit cho tình huống này.");
       window.setTimeout(() => setVocabToast(null), 2400);
       return;
     }
 
-    const payload = {
-      learning_unit_id: activeLearningUnitId,
-      word_vi: vocabForm.term,
-      meaning_ja: vocabForm.meaning,
-      example_vi: vocabForm.example || undefined,
-      note: vocabForm.pronunciation || undefined,
-      tag: vocabForm.type || undefined,
-    };
+    if (vocabModal === "add") {
+      const nextRows = normalizeVocabRows([
+        ...vocabRows,
+        {
+          index: String(vocabRows.length + 1),
+          term: vocabForm.term,
+          type: vocabForm.type,
+          meaning: vocabForm.meaning,
+          example: vocabForm.example,
+          pronunciation: vocabForm.pronunciation,
+        },
+      ]);
 
-    setSaveStatus("saving");
-
-    try {
-      if (vocabModal === "add") {
-        const created = await apiCall<{ data?: VocabCardResponse }>(
-          "/vocabulary/admin/create",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-        );
-
-        const createdCard = created.data ?? (created as VocabCardResponse);
-        const nextRows = normalizeVocabRows([
-          ...vocabRows,
-          {
-            id: createdCard.id,
-            index: String(vocabRows.length + 1),
-            term: createdCard.wordVi ?? vocabForm.term,
-            type: createdCard.tag ?? vocabForm.type,
-            meaning: createdCard.meaningJa ?? vocabForm.meaning,
-            example: createdCard.exampleVi ?? vocabForm.example,
-            pronunciation: createdCard.note ?? vocabForm.pronunciation,
-          },
-        ]);
-
-        setVocabRows(nextRows);
-        setLocationsState((prev) =>
-          prev.map((location) => ({
-            ...location,
-            units: location.units.map((unit) =>
-              unit.id === activeUnitId
-                ? { ...unit, vocabCount: nextRows.length }
-                : unit,
-            ),
-          })),
-        );
-        setSaveStatus("saved");
-        setVocabModal(null);
-        setVocabToast("Đã thêm thẻ từ vựng.");
-      } else if (vocabModal === "edit" && vocabToEditIndex) {
-        const existingRow = vocabRows.find(
-          (row) => row.index === vocabToEditIndex,
-        );
-
-        if (existingRow?.id) {
-          const updated = await apiCall<{ data?: VocabCardResponse }>(
-            `/vocabulary/admin/${existingRow.id}`,
-            {
-              method: "PUT",
-              body: JSON.stringify(payload),
-            },
-          );
-
-          const updatedCard = updated.data ?? (updated as VocabCardResponse);
-          const nextRows = normalizeVocabRows(
-            vocabRows.map((row) =>
-              row.index === vocabToEditIndex
-                ? {
-                    ...row,
-                    term: updatedCard.wordVi ?? vocabForm.term,
-                    type: updatedCard.tag ?? vocabForm.type,
-                    meaning: updatedCard.meaningJa ?? vocabForm.meaning,
-                    example: updatedCard.exampleVi ?? vocabForm.example,
-                    pronunciation: updatedCard.note ?? vocabForm.pronunciation,
-                  }
-                : row,
-            ),
-          );
-
-          setVocabRows(nextRows);
-        } else {
-          const nextRows = normalizeVocabRows(
-            vocabRows.map((row) =>
-              row.index === vocabToEditIndex
-                ? {
-                    ...row,
-                    term: vocabForm.term,
-                    type: vocabForm.type,
-                    meaning: vocabForm.meaning,
-                    example: vocabForm.example,
-                    pronunciation: vocabForm.pronunciation,
-                  }
-                : row,
-            ),
-          );
-
-          setVocabRows(nextRows);
-        }
-
-        setSaveStatus("saved");
-        setVocabModal(null);
-        setVocabToEditIndex(null);
-        setVocabToast("Đã cập nhật thẻ từ vựng.");
-      }
-    } catch (error) {
-      console.error("Failed to save vocab", error);
-      setSaveStatus("error");
-      setVocabToast(
-        error instanceof Error ? error.message : "Không thể lưu thẻ từ vựng.",
+      applyLocalVocabRows(nextRows);
+      setSaveStatus("saved");
+      setVocabModal(null);
+      setVocabToast("Đã lưu nháp thẻ từ vựng.");
+    } else if (vocabModal === "edit" && vocabToEditIndex) {
+      const nextRows = normalizeVocabRows(
+        vocabRows.map((row) =>
+          row.index === vocabToEditIndex
+            ? {
+                ...row,
+                term: vocabForm.term,
+                type: vocabForm.type,
+                meaning: vocabForm.meaning,
+                example: vocabForm.example,
+                pronunciation: vocabForm.pronunciation,
+              }
+            : row,
+        ),
       );
+
+      applyLocalVocabRows(nextRows);
+      setSaveStatus("saved");
+      setVocabModal(null);
+      setVocabToEditIndex(null);
+      setVocabToast("Đã lưu nháp thẻ từ vựng.");
     }
 
     window.setTimeout(() => setVocabToast(null), 2400);
@@ -858,39 +812,12 @@ export default function AdminContentScreen() {
       return;
     }
 
-    const existingRow = vocabRows.find((row) => row.index === deleteVocabIndex);
-    setSaveStatus("saving");
-
-    try {
-      if (existingRow?.id) {
-        await apiCall(`/vocabulary/admin/${existingRow.id}`, {
-          method: "DELETE",
-        });
-      }
-
-      const nextRows = normalizeVocabRows(
-        vocabRows.filter((row) => row.index !== deleteVocabIndex),
-      );
-      setVocabRows(nextRows);
-      setLocationsState((prev) =>
-        prev.map((location) => ({
-          ...location,
-          units: location.units.map((unit) =>
-            unit.id === activeUnitId
-              ? { ...unit, vocabCount: nextRows.length }
-              : unit,
-          ),
-        })),
-      );
-      setSaveStatus("saved");
-      setVocabToast(`Đã xóa thẻ #${deleteVocabIndex}.`);
-    } catch (error) {
-      console.error("Failed to delete vocab", error);
-      setSaveStatus("error");
-      setVocabToast(
-        error instanceof Error ? error.message : "Không thể xóa thẻ từ vựng.",
-      );
-    }
+    const nextRows = normalizeVocabRows(
+      vocabRows.filter((row) => row.index !== deleteVocabIndex),
+    );
+    applyLocalVocabRows(nextRows);
+    setSaveStatus("saved");
+    setVocabToast(`Đã xóa nháp thẻ #${deleteVocabIndex}.`);
 
     setDeleteVocabIndex(null);
     window.setTimeout(() => setVocabToast(null), 2400);
@@ -985,7 +912,7 @@ export default function AdminContentScreen() {
                               : location.units;
 
                             return (
-                              <div key={location.id} className="bg-white">
+                              <div key={location.id} className="group bg-white">
                                 <div className="flex items-center justify-between px-3 py-2">
                                   <button
                                     type="button"
@@ -1011,7 +938,7 @@ export default function AdminContentScreen() {
                                     />
                                     {location.label}
                                   </button>
-                                  <div className="flex items-center gap-2">
+                                  <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
                                     <IconButton
                                       ariaLabel="Edit"
                                       onClick={() => {
@@ -1079,35 +1006,78 @@ export default function AdminContentScreen() {
                                               unitId: unit.id,
                                             })
                                           }
-                                          className={`flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-sm transition ${
+                                          className={`group flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-sm transition ${
                                             selectedUnit?.unitId === unit.id
                                               ? "bg-(--vv-accent-soft)"
                                               : "hover:bg-[#f6f8f6]"
                                           }`}
                                         >
                                           <span>{unit.title}</span>
-                                          <StatusDot
-                                            status={
-                                              unit.id === activeUnit?.id
-                                                ? draftWorkflow.draft.status ===
-                                                  "PUBLISHED"
-                                                  ? "published"
-                                                  : draftWorkflow.draft.publishedAt
-                                                    ? "draft"
-                                                    : "draft"
-                                                : unit.status
-                                            }
-                                            ariaLabel="Edit situation"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              setIsEditSituationOpen(true);
-                                              setCurrentLocationId(location.id);
-                                              setSituationForm({
-                                                id: unit.id,
-                                                title: unit.title,
-                                              });
-                                            }}
-                                          />
+                                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <IconButton
+                                              ariaLabel="Edit"
+                                              onClick={() => {
+                                                setIsEditSituationOpen(true);
+                                                setCurrentLocationId(location.id);
+                                                setSituationForm({
+                                                  id: unit.id,
+                                                  title: unit.title,
+                                                });
+                                              }}
+                                            >
+                                              <EditIcon className="h-4 w-4" />
+                                            </IconButton>
+
+                                            <IconButton
+                                              ariaLabel="Duplicate"
+                                              onClick={() => {
+                                                const newUnit = {
+                                                  id: `unit-${Date.now()}`,
+                                                  title: `${unit.title} (Copy)`,
+                                                  status: "draft" as Status,
+                                                  vocabCount: unit.vocabCount ?? 0,
+                                                  listeningCount: unit.listeningCount ?? 0,
+                                                  duration: unit.duration ?? "0:00",
+                                                };
+                                                setLocationsState((prev) =>
+                                                  prev.map((l) =>
+                                                    l.id === location.id
+                                                      ? { ...l, units: [...l.units, newUnit] }
+                                                      : l,
+                                                  ),
+                                                );
+                                                setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
+                                                window.setTimeout(() => setLocationToast(null), 2000);
+                                              }}
+                                            >
+                                              <PlusIcon className="h-4 w-4" />
+                                            </IconButton>
+
+                                            <div>
+                                              <StatusDot
+                                                status={
+                                                  unit.id === activeUnit?.id
+                                                    ? draftWorkflow.draft.status ===
+                                                      "PUBLISHED"
+                                                      ? "published"
+                                                      : draftWorkflow.draft.publishedAt
+                                                        ? "draft"
+                                                        : "draft"
+                                                    : unit.status
+                                                }
+                                                ariaLabel="Edit situation"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  setIsEditSituationOpen(true);
+                                                  setCurrentLocationId(location.id);
+                                                  setSituationForm({
+                                                    id: unit.id,
+                                                    title: unit.title,
+                                                  });
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
                                         </button>
                                       ))}
                                       {filteredUnits.length === 0 ? (
@@ -2244,7 +2214,7 @@ function IconButton({
 }: {
   children: ReactNode;
   ariaLabel: string;
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
   className?: string;
 }) {
   return (
