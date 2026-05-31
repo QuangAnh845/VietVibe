@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { apiCall } from "@/lib/api";
+import type { AdminContentDraftPayload } from "@/lib/admin-content-draft-workflow";
 import { AutoSaveIndicator } from "./auto-save-indicator";
 import { useAdminContentDraftWorkflow } from "../hooks/use-admin-content-draft-workflow";
 import AdminSidebar from "./admin-sidebar";
@@ -148,50 +149,6 @@ const formatDuration = (value?: number) => {
 
 const formatTimestamp = (value?: number) => formatDuration(value ?? 0);
 
-const parseTimestampToSeconds = (value: string) => {
-  const parts = value
-    .split(":")
-    .map((part) => Number(part.trim()))
-    .filter((part) => Number.isFinite(part));
-
-  if (parts.length === 0) return 0;
-  if (parts.length === 1) return Math.max(0, parts[0]);
-  if (parts.length === 2) return Math.max(0, parts[0] * 60 + parts[1]);
-  return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
-};
-
-const buildTranscriptPayload = (
-  rows: ScriptRow[],
-  durationSeconds?: number,
-) => {
-  const startTimes = rows.map((row) => parseTimestampToSeconds(row.timestamp));
-  const fallbackDuration = Number.isFinite(durationSeconds)
-    ? Math.max(0, durationSeconds ?? 0)
-    : undefined;
-
-  return rows.map((row, index) => {
-    const startTime = startTimes[index] ?? 0;
-    const nextStart = startTimes[index + 1];
-    const rawEnd =
-      row.endTimeSeconds ??
-      (Number.isFinite(nextStart) ? (nextStart as number) : undefined);
-    let endTime = Number.isFinite(rawEnd)
-      ? (rawEnd as number)
-      : (fallbackDuration ?? startTime + 1);
-
-    if (endTime <= startTime) {
-      endTime = startTime + 1;
-    }
-
-    return {
-      startTime,
-      endTime,
-      textVi: row.vi,
-      textJa: row.jp || undefined,
-    };
-  });
-};
-
 const normalizeVocabRows = (rows: VocabRow[]) =>
   rows.map((row, index) => ({
     ...row,
@@ -240,7 +197,6 @@ export default function AdminContentScreen() {
   const [isContentLoading, setIsContentLoading] = useState(true);
   const [contentError, setContentError] = useState<string | null>(null);
   const [ambientOptions, setAmbientOptions] = useState<AmbientOption[]>([]);
-  const [selectedAmbientIds, setSelectedAmbientIds] = useState<string[]>([]);
   const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
   const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState({
@@ -292,71 +248,9 @@ export default function AdminContentScreen() {
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
-
-  const applyListeningLesson = (lesson: ListeningLessonResponse) => {
-    const transcriptLines = Array.isArray(lesson.transcriptLines)
-      ? lesson.transcriptLines
-      : [];
-    const nextListeningRows = transcriptLines.map((line, index) => ({
-      index: String(index + 1),
-      vi: line.text_vi ?? "",
-      jp: line.text_ja ?? "",
-      timestamp: formatTimestamp(line.start_time ?? 0),
-      endTimeSeconds: line.end_time,
-    }));
-
-    setActiveLesson(lesson);
-    setListeningRows(nextListeningRows);
-  };
-
-  const persistListeningRows = async (nextRows: ScriptRow[]) => {
-    if (!activeLessonId) {
-      setDetailError("Chưa có bài nghe để cập nhật.");
-      return false;
-    }
-
-    setSaveStatus("saving");
-    setDetailError(null);
-
-    try {
-      const updated = await apiCall<ListeningLessonResponse>(
-        `/listening/${activeLessonId}`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            transcriptLines: buildTranscriptPayload(
-              nextRows,
-              activeLesson?.duration_seconds,
-            ),
-          }),
-        },
-      );
-
-      applyListeningLesson(updated);
-      setLocationsState((prev) =>
-        prev.map((location) => ({
-          ...location,
-          units: location.units.map((unit) =>
-            unit.id === activeUnitId
-              ? {
-                  ...unit,
-                  listeningCount: nextRows.length,
-                }
-              : unit,
-          ),
-        })),
-      );
-      setSaveStatus("saved");
-      return true;
-    } catch (error) {
-      console.error("Failed to update listening lesson", error);
-      setSaveStatus("error");
-      setDetailError(
-        error instanceof Error ? error.message : "Không thể lưu bài nghe.",
-      );
-      return false;
-    }
-  };
+  const defaultAmbientIds = ambientOptions.slice(0, 2).map((item) => item.id);
+  const selectedAmbientIds =
+    draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
   const filteredLocations = useMemo(() => {
     const normalized = contentQuery.trim().toLowerCase();
@@ -399,7 +293,6 @@ export default function AdminContentScreen() {
 
         if (isMounted) {
           setAmbientOptions(options);
-          setSelectedAmbientIds(options.slice(0, 2).map((item) => item.id));
         }
       } catch (error) {
         console.error("Failed to load environment sounds", error);
@@ -535,29 +428,41 @@ export default function AdminContentScreen() {
     draftWorkflow.setDraft((currentDraft) => ({
       ...currentDraft,
       contentId: `admin-content-${activeUnit.id}`,
-      status: activeUnit.status === "published" ? "PUBLISHED" : "DRAFT",
+      status:
+        currentDraft.status === "PUBLISHED"
+          ? "PUBLISHED"
+          : currentDraft.publishedAt
+            ? "DRAFT"
+            : activeUnit.status === "published"
+              ? "PUBLISHED"
+              : "DRAFT",
       placeId: activeLocation.id,
       placeNameVi: activeLocation.label,
       placeNameJa: activeLocation.label,
       situationId: activeUnit.id,
       situationTitleVi: activeUnit.title,
       situationTitleJa: activeUnit.title,
+      learningUnitId: activeLearningUnitId ?? undefined,
       titleVi: lessonTitleVi,
       titleJa: lessonTitleJa,
       description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
       vocabCards: vocabRows.map((row) => ({
-        id: row.index,
+        id: row.id,
         term: row.term,
         type: row.type,
         meaning: row.meaning,
         example: row.example,
+        note: row.pronunciation,
       })),
       listening: {
+        lessonId: activeLessonId ?? undefined,
         titleVi: lessonTitleVi,
         titleJa: lessonTitleJa,
         audioUrl: lessonAudioUrl,
         durationSeconds: lessonDurationSeconds,
         description: `Bài nghe cho tình huống ${activeUnit.title}.`,
+        ambientSoundIds:
+          draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
         transcriptLines: listeningRows.map((row) => ({
           id: row.index,
           vi: row.vi,
@@ -570,8 +475,12 @@ export default function AdminContentScreen() {
     activeLocation,
     activeUnit,
     activeLesson,
+    activeLessonId,
+    activeLearningUnitId,
     listeningRows,
     vocabRows,
+    defaultAmbientIds,
+    draftWorkflow.draft.listening?.ambientSoundIds,
     draftWorkflow,
   ]);
 
@@ -663,7 +572,72 @@ export default function AdminContentScreen() {
     setIsAddingRow(false);
   };
 
-  const saveNewRow = async () => {
+  const applyLocalListeningRows = (nextRows: ScriptRow[]) => {
+    setListeningRows(nextRows);
+    setLocationsState((prev) =>
+      prev.map((location) => ({
+        ...location,
+        units: location.units.map((unit) =>
+          unit.id === activeUnitId
+            ? {
+                ...unit,
+                listeningCount: nextRows.length,
+              }
+            : unit,
+        ),
+      })),
+    );
+  };
+
+  const buildCurrentDraftSnapshot = (): AdminContentDraftPayload => ({
+    ...draftWorkflow.draft,
+    contentId: `admin-content-${activeUnit?.id ?? draftWorkflow.draft.contentId}`,
+    status:
+      draftWorkflow.draft.status === "PUBLISHED"
+        ? "PUBLISHED"
+        : "DRAFT",
+    placeId: activeLocation?.id ?? draftWorkflow.draft.placeId,
+    placeNameVi: activeLocation?.label ?? draftWorkflow.draft.placeNameVi,
+    placeNameJa: activeLocation?.label ?? draftWorkflow.draft.placeNameJa,
+    situationId: activeUnit?.id ?? draftWorkflow.draft.situationId,
+    situationTitleVi: activeUnit?.title ?? draftWorkflow.draft.situationTitleVi,
+    situationTitleJa: activeUnit?.title ?? draftWorkflow.draft.situationTitleJa,
+    learningUnitId: activeLearningUnitId ?? draftWorkflow.draft.learningUnitId,
+    titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.titleVi,
+    titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.titleJa,
+    description:
+      draftWorkflow.draft.description ||
+      `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit?.title ?? ""}.`,
+    vocabCards: vocabRows.map((row) => ({
+      id: row.id,
+      term: row.term,
+      type: row.type,
+      meaning: row.meaning,
+      example: row.example,
+      note: row.pronunciation,
+    })),
+    listening: {
+      lessonId: activeLessonId ?? draftWorkflow.draft.listening?.lessonId,
+      titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.listening?.titleVi || "",
+      titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.listening?.titleJa || "",
+      audioUrl: activeLesson?.audio_url || draftWorkflow.draft.listening?.audioUrl || "",
+      durationSeconds:
+        activeLesson?.duration_seconds ?? draftWorkflow.draft.listening?.durationSeconds ?? 0,
+      description:
+        draftWorkflow.draft.listening?.description ||
+        `Bài nghe cho tình huống ${activeUnit?.title ?? ""}.`,
+      ambientSoundIds:
+        draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
+      transcriptLines: listeningRows.map((row) => ({
+        id: row.index,
+        vi: row.vi,
+        jp: row.jp,
+        timestamp: row.timestamp,
+      })),
+    },
+  });
+
+  const saveNewRow = () => {
     const nextRows = [
       ...listeningRows,
       {
@@ -674,10 +648,8 @@ export default function AdminContentScreen() {
       },
     ];
 
-    const success = await persistListeningRows(nextRows);
-    if (success) {
-      resetNewRow();
-    }
+    applyLocalListeningRows(nextRows);
+    resetNewRow();
   };
 
   const handleCopyTimestamp = async (rowIndex: string, value: string) => {
@@ -691,12 +663,31 @@ export default function AdminContentScreen() {
   };
 
   const toggleAmbientSelection = (id: string) => {
-    setSelectedAmbientIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
-    );
+    draftWorkflow.setDraft((currentDraft) => {
+      const currentAmbientIds =
+        currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
+      const nextAmbientIds = currentAmbientIds.includes(id)
+        ? currentAmbientIds.filter((item) => item !== id)
+        : [...currentAmbientIds, id];
+
+      return {
+        ...currentDraft,
+        listening: {
+          ...(currentDraft.listening ?? {
+            titleVi: "",
+            titleJa: "",
+            audioUrl: "",
+            durationSeconds: 0,
+            description: "",
+            transcriptLines: [],
+          }),
+          ambientSoundIds: nextAmbientIds,
+        },
+      };
+    });
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = () => {
     if (!deleteRow) {
       return;
     }
@@ -705,10 +696,8 @@ export default function AdminContentScreen() {
       .filter((row) => row.index !== deleteRow)
       .map((row, index) => ({ ...row, index: String(index + 1) }));
 
-    const success = await persistListeningRows(nextRows);
-    if (success) {
-      setDeleteRow(null);
-    }
+    applyLocalListeningRows(nextRows);
+    setDeleteRow(null);
   };
 
   const handlePublishActiveUnit = async () => {
@@ -719,7 +708,7 @@ export default function AdminContentScreen() {
     setSaveStatus("saving");
 
     try {
-      await draftWorkflow.publish();
+      await draftWorkflow.publish(buildCurrentDraftSnapshot());
       setLocationsState((prev) =>
         prev.map((location) =>
           location.id === activeLocation.id
@@ -1056,7 +1045,21 @@ export default function AdminContentScreen() {
                                     >
                                       <TrashIcon className="h-4 w-4" />
                                     </IconButton>
-                                    <StatusDot status={location.status} />
+                                    <StatusDot
+                                      status={
+                                        location.units.some(
+                                          (unit) => unit.id === activeUnit?.id,
+                                        ) && draftWorkflow.draft.status ===
+                                          "PUBLISHED"
+                                          ? "published"
+                                          : location.units.some(
+                                                (unit) =>
+                                                  unit.id === activeUnit?.id,
+                                              ) && draftWorkflow.draft.publishedAt
+                                            ? "draft"
+                                            : location.status
+                                      }
+                                    />
                                   </div>
                                 </div>
 
@@ -1096,7 +1099,16 @@ export default function AdminContentScreen() {
                                         >
                                           <span>{unit.title}</span>
                                           <StatusDot
-                                            status={unit.status}
+                                            status={
+                                              unit.id === activeUnit?.id
+                                                ? draftWorkflow.draft.status ===
+                                                  "PUBLISHED"
+                                                  ? "published"
+                                                  : draftWorkflow.draft.publishedAt
+                                                    ? "draft"
+                                                    : "draft"
+                                                : unit.status
+                                            }
                                             ariaLabel="Edit situation"
                                             onClick={(event) => {
                                               event.stopPropagation();
@@ -1170,9 +1182,13 @@ export default function AdminContentScreen() {
                           <AutoSaveIndicator
                             status={draftWorkflow.autoSaveStatus}
                           />
-                          {activeUnit?.status === "published" ? (
+                          {draftWorkflow.draft.status === "PUBLISHED" ? (
                             <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
                               Đã xuất bản
+                            </span>
+                          ) : draftWorkflow.draft.publishedAt ? (
+                            <span className="rounded-full border border-[#f4b24f] bg-[#fdf6e3] px-3 py-2 text-[11px] font-semibold text-[#b4771e]">
+                              Nháp
                             </span>
                           ) : (
                             <span className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#b4771e] border border-[#f4b24f] bg-[#fdf6e3]">
@@ -1542,7 +1558,7 @@ export default function AdminContentScreen() {
                                               <div className="flex items-center gap-2">
                                                 <IconButton
                                                   ariaLabel="Save"
-                                                  onClick={async () => {
+                                                  onClick={() => {
                                                     const nextRows =
                                                       listeningRows.map(
                                                         (item) =>
@@ -1558,13 +1574,10 @@ export default function AdminContentScreen() {
                                                             : item,
                                                       );
 
-                                                    const success =
-                                                      await persistListeningRows(
-                                                        nextRows,
-                                                      );
-                                                    if (success) {
-                                                      setEditingRow(null);
-                                                    }
+                                                    applyLocalListeningRows(
+                                                      nextRows,
+                                                    );
+                                                    setEditingRow(null);
                                                   }}
                                                   className="border-[#a9d7c1] bg-white text-[#2f5d50]"
                                                 >
