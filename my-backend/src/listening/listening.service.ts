@@ -16,10 +16,6 @@ import { UpdateListeningDto } from './dto/update-listening.dto';
 import { UpdateListeningSessionDto } from './dto/update-listening-session.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { UpdateSituationDto } from './dto/update-situation.dto';
-import { AdminListeningLessonsQueryDto } from './dto/admin-listening-lessons-query.dto';
-import { UpdateListeningTranscriptDto } from './dto/update-listening-transcript.dto';
-import { TranscriptLineDto } from './transcript-line.dto';
-import { validateTranscriptLines } from './transcript-validation';
 import {
   AMBIENT_SOUNDS,
   DEFAULT_AMBIENT_SOUND,
@@ -51,6 +47,7 @@ const {
   TranscriptLine,
   User,
   UserProgress,
+  VocabularyCard,
 } = models;
 
 const COMPLETION_THRESHOLD_SECONDS = 1;
@@ -94,25 +91,34 @@ export class ListeningService {
       created_at: 1,
     });
 
-    const situationsWithUnits = await Promise.all(
-      situations.map(async (situation) => {
-        const learningUnits = await LearningUnit.find({
-          situation_id: situation._id,
-        }).sort({ created_at: 1 });
+    const situationIds = situations.map((situation) => situation._id);
 
-        const learningUnitsWithLevel = await Promise.all(
-          learningUnits.map(async (unit) => {
-            const level = await Level.findById(unit.level_id);
-            return this.mapLearningUnit(unit, level);
-          }),
-        );
+    // Fetch all learning units and their levels in a single query with populate
+    const learningUnits = await LearningUnit.find({
+      situation_id: { $in: situationIds },
+    })
+      .populate('level_id')
+      .sort({ created_at: 1 });
 
-        return {
-          ...this.mapSituation(situation),
-          learningUnits: learningUnitsWithLevel,
-        };
-      }),
-    );
+    // Group learning units by situation_id in memory
+    const unitsBySituation = new Map<string, any[]>();
+    for (const unit of learningUnits) {
+      const sitId = String(unit.situation_id);
+      let arr = unitsBySituation.get(sitId);
+      if (!arr) {
+        arr = [];
+        unitsBySituation.set(sitId, arr);
+      }
+      arr.push(this.mapLearningUnit(unit, unit.level_id));
+    }
+
+    const situationsWithUnits = situations.map((situation) => {
+      const sitId = String(situation._id);
+      return {
+        ...this.mapSituation(situation),
+        learningUnits: unitsBySituation.get(sitId) ?? [],
+      };
+    });
 
     return {
       ...this.mapPlace(place),
@@ -129,182 +135,15 @@ export class ListeningService {
 
     const learningUnits = await LearningUnit.find({
       situation_id: situationObjectId,
-    }).sort({ created_at: 1 });
+    })
+      .populate('level_id')
+      .sort({ created_at: 1 });
 
-    // Get level information for each learning unit
-    const unitsWithLevel = await Promise.all(
-      learningUnits.map(async (unit) => {
-        const level = await Level.findById(unit.level_id);
-        return this.mapLearningUnit(unit, level);
-      }),
-    );
-
-    return unitsWithLevel;
+    return learningUnits.map((unit) => this.mapLearningUnit(unit, unit.level_id));
   }
 
   async getAllListeningLessons() {
     return ListeningLesson.find().sort({ created_at: 1 });
-  }
-
-  async getAdminListeningLessons(query: AdminListeningLessonsQueryDto) {
-    const lessons = await ListeningLesson.find().sort({ created_at: -1 });
-    const learningUnitIds = [
-      ...new Set(lessons.map((lesson) => String(lesson.learning_unit_id))),
-    ];
-    const learningUnits = await LearningUnit.find({
-      _id: { $in: learningUnitIds },
-    });
-    const situationIds = [
-      ...new Set(learningUnits.map((unit) => String(unit.situation_id))),
-    ];
-    const situations = await Situation.find({ _id: { $in: situationIds } });
-    const placeIds = [
-      ...new Set(situations.map((situation) => String(situation.place_id))),
-    ];
-    const places = await Place.find({ _id: { $in: placeIds } });
-
-    const placeById = new Map<string, any>(
-      places.map((place: any) => [String(place._id), place]),
-    );
-    const situationById = new Map<string, any>(
-      situations.map((situation: any) => [String(situation._id), situation]),
-    );
-    const unitById = new Map<string, any>(
-      learningUnits.map((unit: any) => [String(unit._id), unit]),
-    );
-
-    const normalizedQuery = query.q?.trim().toLowerCase();
-
-    return lessons
-      .map((lesson) => {
-        const unit = unitById.get(String(lesson.learning_unit_id));
-        const situation = unit
-          ? situationById.get(String(unit.situation_id))
-          : null;
-        const place = situation
-          ? placeById.get(String(situation.place_id))
-          : null;
-
-        return {
-          id: String(lesson._id),
-          learningUnitId: String(lesson.learning_unit_id),
-          titleVi: lesson.title_vi,
-          titleJa: lesson.title_ja,
-          audioUrl: lesson.audio_url,
-          durationSeconds: lesson.duration_seconds,
-          description: lesson.description ?? null,
-          unitTitleVi: unit?.title_vi ?? null,
-          situationTitleVi: situation?.title_vi ?? null,
-          placeTitleVi: place?.name_vi ?? null,
-          situationId: situation ? String(situation._id) : null,
-          placeId: place ? String(place._id) : null,
-        };
-      })
-      .filter((item) => {
-        if (query.learningUnitId && item.learningUnitId !== query.learningUnitId) {
-          return false;
-        }
-        if (query.situationId && item.situationId !== query.situationId) {
-          return false;
-        }
-        if (query.placeId && item.placeId !== query.placeId) {
-          return false;
-        }
-        if (normalizedQuery) {
-          const haystack = [
-            item.titleVi,
-            item.titleJa,
-            item.unitTitleVi,
-            item.situationTitleVi,
-            item.placeTitleVi,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-          if (!haystack.includes(normalizedQuery)) {
-            return false;
-          }
-        }
-        return true;
-      });
-  }
-
-  async getLearningUnitsWithoutLesson() {
-    const units = await LearningUnit.find().sort({ created_at: 1 });
-    const lessons = await ListeningLesson.find().select('learning_unit_id');
-    const usedUnitIds = new Set(
-      lessons.map((lesson) => String(lesson.learning_unit_id)),
-    );
-
-    const availableUnits = await Promise.all(
-      units
-        .filter((unit) => !usedUnitIds.has(String(unit._id)))
-        .map(async (unit) => {
-          const situation = await Situation.findById(unit.situation_id);
-          const place = situation
-            ? await Place.findById(situation.place_id)
-            : null;
-          const level = await Level.findById(unit.level_id);
-
-          return {
-            ...this.mapLearningUnit(unit, level),
-            situationTitleVi: situation?.title_vi ?? null,
-            placeTitleVi: place?.name_vi ?? null,
-            placeId: place ? String(place._id) : null,
-            situationId: situation ? String(situation._id) : null,
-          };
-        }),
-    );
-
-    return availableUnits;
-  }
-
-  async updateListeningLessonTranscript(
-    id: string,
-    updateDto: UpdateListeningTranscriptDto,
-  ) {
-    const lesson = await this.findLessonOrThrow(id);
-    const durationSeconds =
-      updateDto.durationSeconds ?? lesson.duration_seconds;
-
-    validateTranscriptLines(updateDto.transcriptLines, durationSeconds);
-
-    const lessonId = this.toObjectId(id);
-    const lessonUpdate: Record<string, unknown> = {};
-
-    if (updateDto.durationSeconds !== undefined) {
-      lessonUpdate.duration_seconds = updateDto.durationSeconds;
-    }
-    if (updateDto.audioUrl !== undefined) {
-      lessonUpdate.audio_url = updateDto.audioUrl;
-    }
-
-    if (Object.keys(lessonUpdate).length) {
-      await ListeningLesson.findByIdAndUpdate(lessonId, lessonUpdate);
-    }
-
-    await this.replaceTranscriptLines(lessonId, updateDto.transcriptLines);
-
-    return this.getListeningLessonById(id);
-  }
-
-  private async replaceTranscriptLines(
-    lessonId: unknown,
-    lines: TranscriptLineDto[],
-  ) {
-    await TranscriptLine.deleteMany({ lesson_id: lessonId });
-    if (!lines.length) {
-      return;
-    }
-
-    const transcriptData = lines.map((line) => ({
-      lesson_id: lessonId,
-      start_time: line.startTime,
-      end_time: line.endTime,
-      text_vi: line.textVi,
-      text_ja: line.textJa,
-    }));
-    await TranscriptLine.insertMany(transcriptData);
   }
 
   async getAllSituations() {
@@ -313,15 +152,11 @@ export class ListeningService {
   }
 
   async getAllLearningUnits() {
-    const units = await LearningUnit.find().sort({ created_at: 1 });
-    const unitsWithLevel = await Promise.all(
-      units.map(async (unit) => {
-        const level = await Level.findById(unit.level_id);
-        return this.mapLearningUnit(unit, level);
-      }),
-    );
+    const units = await LearningUnit.find()
+      .populate('level_id')
+      .sort({ created_at: 1 });
 
-    return unitsWithLevel;
+    return units.map((unit) => this.mapLearningUnit(unit, unit.level_id));
   }
 
   async createPlace(createDto: CreatePlaceDto) {
@@ -609,11 +444,14 @@ export class ListeningService {
     });
 
     if (createDto.transcriptLines?.length) {
-      validateTranscriptLines(
-        createDto.transcriptLines,
-        createDto.durationSeconds,
-      );
-      await this.replaceTranscriptLines(lesson._id, createDto.transcriptLines);
+      const transcriptData = createDto.transcriptLines.map((line) => ({
+        lesson_id: lesson._id,
+        start_time: line.startTime,
+        end_time: line.endTime,
+        text_vi: line.textVi,
+        text_ja: line.textJa,
+      }));
+      await TranscriptLine.insertMany(transcriptData);
     }
 
     return this.getListeningLessonById(String(lesson._id));
@@ -658,10 +496,17 @@ export class ListeningService {
     });
 
     if (updateDto.transcriptLines) {
-      const durationSeconds =
-        updateDto.durationSeconds ?? lesson.duration_seconds;
-      validateTranscriptLines(updateDto.transcriptLines, durationSeconds);
-      await this.replaceTranscriptLines(lessonId, updateDto.transcriptLines);
+      await TranscriptLine.deleteMany({ lesson_id: lessonId });
+      if (updateDto.transcriptLines.length) {
+        const transcriptData = updateDto.transcriptLines.map((line) => ({
+          lesson_id: lessonId,
+          start_time: line.startTime,
+          end_time: line.endTime,
+          text_vi: line.textVi,
+          text_ja: line.textJa,
+        }));
+        await TranscriptLine.insertMany(transcriptData);
+      }
     }
 
     return this.getListeningLessonById(id);
@@ -1219,6 +1064,9 @@ export class ListeningService {
     await TranscriptLine.deleteMany({ lesson_id: { $in: lessonIds } });
     await ListeningSession.deleteMany({ lesson_id: { $in: lessonIds } });
     await UserProgress.deleteMany({
+      learning_unit_id: { $in: learningUnitIds },
+    });
+    await VocabularyCard.deleteMany({
       learning_unit_id: { $in: learningUnitIds },
     });
     await ListeningLesson.deleteMany({

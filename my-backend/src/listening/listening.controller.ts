@@ -41,8 +41,6 @@ import { UpdateListeningDto } from './dto/update-listening.dto';
 import { UpdateListeningSessionDto } from './dto/update-listening-session.dto';
 import { UpdatePlaceDto } from './dto/update-place.dto';
 import { UpdateSituationDto } from './dto/update-situation.dto';
-import { AdminListeningLessonsQueryDto } from './dto/admin-listening-lessons-query.dto';
-import { UpdateListeningTranscriptDto } from './dto/update-listening-transcript.dto';
 import { ListeningService } from './listening.service';
 import { JwtAuthGuard } from '../login/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../login/guards/roles.guard.js';
@@ -245,42 +243,6 @@ export class ListeningController {
   @ApiOkResponse({ description: 'Learning unit deleted successfully' })
   deleteLearningUnit(@Param('id') id: string) {
     return this.listeningService.deleteLearningUnit(id);
-  }
-
-  @Get('admin/lessons')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  @ApiBearerAuth('access_token')
-  @ApiOperation({ summary: '[ADMIN] List listening lessons with hierarchy metadata' })
-  @ApiOkResponse({ description: 'List of listening lessons for admin' })
-  getAdminListeningLessons(@Query() query: AdminListeningLessonsQueryDto) {
-    return this.listeningService.getAdminListeningLessons(query);
-  }
-
-  @Get('admin/learning-units-without-lesson')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  @ApiBearerAuth('access_token')
-  @ApiOperation({ summary: '[ADMIN] Learning units without a listening lesson' })
-  @ApiOkResponse({ description: 'Learning units available for new lessons' })
-  getLearningUnitsWithoutLesson() {
-    return this.listeningService.getLearningUnitsWithoutLesson();
-  }
-
-  @Put('admin/:id/transcript')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  @ApiBearerAuth('access_token')
-  @ApiOperation({ summary: '[ADMIN] Update transcript lines and optional audio metadata' })
-  @ApiParam({ name: 'id', description: 'Listening lesson id' })
-  @ApiOkResponse({ description: 'Updated listening lesson with transcript' })
-  @ApiNotFoundResponse({ description: 'Listening lesson not found' })
-  @ApiBadRequestResponse({ description: 'Invalid transcript timestamps' })
-  updateListeningLessonTranscript(
-    @Param('id') id: string,
-    @Body() updateDto: UpdateListeningTranscriptDto,
-  ) {
-    return this.listeningService.updateListeningLessonTranscript(id, updateDto);
   }
 
   @Get('places')

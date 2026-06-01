@@ -56,12 +56,8 @@ export async function apiFetch<T>(
     }
   }
 
-  // Set default content type for JSON bodies only (not FormData)
-  if (
-    !headers.has('Content-Type') &&
-    fetchOptions.body &&
-    !(fetchOptions.body instanceof FormData)
-  ) {
+  // Set default content type if not set
+  if (!headers.has('Content-Type') && fetchOptions.body) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -190,13 +186,6 @@ export const api = {
 
   delete: <T,>(endpoint: string, options?: FetchOptions) =>
     apiFetch<T>(endpoint, { ...options, method: 'DELETE' }),
-
-  upload: <T,>(endpoint: string, formData: FormData, options?: FetchOptions) =>
-    apiFetch<T>(endpoint, {
-      ...options,
-      method: 'POST',
-      body: formData,
-    }),
 };
 
 // Legacy export for backward compatibility

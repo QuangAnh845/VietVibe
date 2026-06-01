@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 
-type AdminTab = "dashboard" | "content" | "listening" | "audio" | "users";
+type AdminTab = "dashboard" | "content" | "audio" | "users";
 
 type AdminSidebarProps = {
   active: AdminTab;
@@ -50,14 +50,6 @@ export default function AdminSidebar({ active }: AdminSidebarProps) {
           >
             <FolderIcon className="h-4 w-4" />
             Quản lý nội dung
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/admin/listening")}
-            className={itemClass("listening")}
-          >
-            <HeadphonesIcon className="h-4 w-4" />
-            Bài nghe & Timestamp
           </button>
           <button
             type="button"
@@ -150,27 +142,6 @@ function FolderIcon({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <path d="M3 7h6l2 2h10v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-    </svg>
-  );
-}
-
-function HeadphonesIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 14a4 4 0 0 1 4-4h1" />
-      <path d="M4 18v2" />
-      <path d="M8 10V6a4 4 0 0 1 8 0v4" />
-      <path d="M20 14a4 4 0 0 0-4-4h-1" />
-      <path d="M20 18v2" />
     </svg>
   );
 }
