@@ -927,7 +927,9 @@ export default function AdminContentScreen() {
       });
 
       setActiveLesson((currentLesson) =>
-        currentLesson ? { ...currentLesson, audio_url: nextAudioUrl } : currentLesson,
+        currentLesson
+          ? { ...currentLesson, audio_url: nextAudioUrl }
+          : currentLesson,
       );
       setPendingAudioFile(null);
       setListeningModal(null);
@@ -936,7 +938,9 @@ export default function AdminContentScreen() {
     } catch (error) {
       console.error("Failed to upload audio file", error);
       setAudioUploadError(
-        error instanceof Error ? error.message : "Không thể tải lên file audio.",
+        error instanceof Error
+          ? error.message
+          : "Không thể tải lên file audio.",
       );
     } finally {
       setIsUploadingAudio(false);

@@ -138,10 +138,7 @@ export default function AdminAudioScreen() {
     }
 
     const draft: AudioDraftStore = { items: audioItems };
-    window.localStorage.setItem(
-      AUDIO_DRAFT_STORAGE_KEY,
-      JSON.stringify(draft),
-    );
+    window.localStorage.setItem(AUDIO_DRAFT_STORAGE_KEY, JSON.stringify(draft));
   }, [audioItems, isHydrated]);
 
   useEffect(() => {
@@ -168,7 +165,9 @@ export default function AdminAudioScreen() {
   const getResolvedAudioUrl = (audioUrl: string) => {
     if (!audioUrl) return "";
     if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
-    return audioUrl.startsWith("/") ? `${API_BASE_URL}${audioUrl}` : `${API_BASE_URL}/${audioUrl}`;
+    return audioUrl.startsWith("/")
+      ? `${API_BASE_URL}${audioUrl}`
+      : `${API_BASE_URL}/${audioUrl}`;
   };
 
   const getAudioDurationLabel = async (audioUrl: string) => {
@@ -176,7 +175,9 @@ export default function AdminAudioScreen() {
       const player = new Audio(audioUrl);
       player.preload = "metadata";
       player.onloadedmetadata = () => {
-        const seconds = Number.isFinite(player.duration) ? Math.max(0, Math.round(player.duration)) : 0;
+        const seconds = Number.isFinite(player.duration)
+          ? Math.max(0, Math.round(player.duration))
+          : 0;
         const minutes = Math.floor(seconds / 60);
         const remainder = seconds % 60;
         resolve(`${minutes}:${String(remainder).padStart(2, "0")}`);
@@ -274,7 +275,9 @@ export default function AdminAudioScreen() {
 
         nextAudioUrl = uploadResult.audioUrl;
         nextFilename = pendingFile.name;
-        nextDuration = await getAudioDurationLabel(getResolvedAudioUrl(nextAudioUrl));
+        nextDuration = await getAudioDurationLabel(
+          getResolvedAudioUrl(nextAudioUrl),
+        );
         nextSize = formatFileSize(pendingFile.size);
       }
 
@@ -294,7 +297,9 @@ export default function AdminAudioScreen() {
 
       setAudioItems((current) => {
         if (activeModal === "edit" && selectedItem) {
-          return current.map((item) => (item.id === selectedItem.id ? nextItem : item));
+          return current.map((item) =>
+            item.id === selectedItem.id ? nextItem : item,
+          );
         }
 
         return [nextItem, ...current];
@@ -312,7 +317,9 @@ export default function AdminAudioScreen() {
       window.setTimeout(() => setShowToast(false), 2400);
     } catch (error) {
       console.error("Failed to save audio draft", error);
-      setAudioError(error instanceof Error ? error.message : "Không thể lưu nháp tạp âm.");
+      setAudioError(
+        error instanceof Error ? error.message : "Không thể lưu nháp tạp âm.",
+      );
     } finally {
       setIsUploading(false);
     }
@@ -335,7 +342,9 @@ export default function AdminAudioScreen() {
   const handleDelete = () => {
     if (!selectedItem) return;
 
-    setAudioItems((current) => current.filter((item) => item.id !== selectedItem.id));
+    setAudioItems((current) =>
+      current.filter((item) => item.id !== selectedItem.id),
+    );
     setActiveModal(null);
     setSelectedItem(null);
     setShowToast(true);
@@ -449,7 +458,9 @@ export default function AdminAudioScreen() {
                   </div>
 
                   <div className="mt-4 flex items-center justify-between">
-                    <span className={getStatusClass(item.status)}>{getStatusLabel(item.status)}</span>
+                    <span className={getStatusClass(item.status)}>
+                      {getStatusLabel(item.status)}
+                    </span>
                     <span className={getCategoryClass(item.category)}>
                       {item.category}
                     </span>
@@ -525,7 +536,10 @@ export default function AdminAudioScreen() {
                     className="h-12 rounded-2xl border border-transparent bg-[#f7f9f7] px-4 text-sm text-[#1f2b27] ring-1 ring-[#eef2ee] focus:outline-none"
                   >
                     {filters
-                      .filter((filter): filter is AudioCategory => filter !== "Tất cả")
+                      .filter(
+                        (filter): filter is AudioCategory =>
+                          filter !== "Tất cả",
+                      )
                       .map((category) => (
                         <option key={category} value={category}>
                           {category}
@@ -562,7 +576,9 @@ export default function AdminAudioScreen() {
                   </div>
                 </div>
                 {audioError ? (
-                  <p className="text-[11px] font-semibold text-[#c65d5d]">{audioError}</p>
+                  <p className="text-[11px] font-semibold text-[#c65d5d]">
+                    {audioError}
+                  </p>
                 ) : null}
               </div>
             </div>
