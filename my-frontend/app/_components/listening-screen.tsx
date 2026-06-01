@@ -686,8 +686,12 @@ export default function ListeningScreen() {
       .slice(0, index)
       .reduce((total, line) => total + getLineDuration(line), 0);
 
-  const totalAudioDuration = lines.length
+  const calculatedDuration = lines.length
     ? lines.reduce((total, line) => total + getLineDuration(line), 0)
+    : 0;
+
+  const totalAudioDuration = calculatedDuration > 0
+    ? calculatedDuration
     : (lesson?.durationSeconds ?? 0);
 
   const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
@@ -958,6 +962,12 @@ export default function ListeningScreen() {
     if (!audio) return;
 
     const time = audio.currentTime;
+
+    if (lines.length === 0 || calculatedDuration === 0) {
+      setCurrentTime(time);
+      return;
+    }
+
     const sourceLineIndex = getLineIndexForAudioSource(audio.src);
 
     if (sourceLineIndex !== -1) {

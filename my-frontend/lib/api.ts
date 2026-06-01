@@ -57,7 +57,7 @@ export async function apiFetch<T>(
   }
 
   // Set default content type if not set
-  if (!headers.has('Content-Type') && fetchOptions.body) {
+  if (!headers.has('Content-Type') && fetchOptions.body && !(fetchOptions.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
