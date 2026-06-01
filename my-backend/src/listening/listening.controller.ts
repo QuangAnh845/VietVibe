@@ -90,18 +90,10 @@ export class ListeningController {
       storage: diskStorage({
         destination: './public/audios',
         filename: (req, file, cb) => {
-          const customName = req.body.customName;
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
           const extension = extname(file.originalname).toLowerCase();
-          
-          let baseName = '';
-          if (customName && typeof customName === 'string' && customName.trim() !== '') {
-            baseName = customName.trim();
-          } else {
-            baseName = file.originalname.slice(0, -extension.length);
-          }
-          
-          const uniquePrefix = Date.now();
-          cb(null, `${uniquePrefix}-${baseName}${extension}`);
+          cb(null, `${uniqueSuffix}${extension}`);
         },
       }),
       limits: {
@@ -138,24 +130,6 @@ export class ListeningController {
     return {
       audioUrl: `/audios/${file.filename}`,
     };
-  }
-
-  @Get('admin/audios')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  @ApiBearerAuth('access_token')
-  @ApiOperation({ summary: '[ADMIN] Get list of uploaded audios' })
-  getUploadedAudios() {
-    return this.listeningService.getUploadedAudios();
-  }
-
-  @Put('admin/audios/rename')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  @ApiBearerAuth('access_token')
-  @ApiOperation({ summary: '[ADMIN] Rename an uploaded audio file' })
-  renameUploadedAudio(@Body() body: { oldUrl: string; newName: string }) {
-    return this.listeningService.renameUploadedAudio(body.oldUrl, body.newName);
   }
 
   @Post('admin/places')
