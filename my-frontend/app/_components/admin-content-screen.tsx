@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { apiCall } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, ReactNode } from "react";
+import { API_BASE_URL, apiCall, apiFetch } from "@/lib/api";
 import {
   getAdminContentDraftFromBrowser,
   saveAdminContentDraftToBrowser,
@@ -165,6 +165,14 @@ const getAudioFileName = (url?: string) => {
   return parts[parts.length - 1] || url;
 };
 
+const resolveBackendAudioUrl = (audioUrl?: string) => {
+  if (!audioUrl) return "";
+  if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
+  return audioUrl.startsWith("/")
+    ? `${API_BASE_URL}${audioUrl}`
+    : `${API_BASE_URL}/${audioUrl}`;
+};
+
 export default function AdminContentScreen() {
   const [isSidebarOpen] = useState(true);
   const [isContentSidebarOpen, setIsContentSidebarOpen] = useState(true);
@@ -233,6 +241,13 @@ export default function AdminContentScreen() {
   const [vocabToEditIndex, setVocabToEditIndex] = useState<string | null>(null);
   const [deleteVocabIndex, setDeleteVocabIndex] = useState<string | null>(null);
   const [vocabToast, setVocabToast] = useState<string | null>(null);
+  const [isListeningPlaying, setIsListeningPlaying] = useState(false);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [pendingAudioFile, setPendingAudioFile] = useState<File | null>(null);
+  const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
+
+  const listeningAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeLocation = useMemo(() => {
     if (!selectedUnit) return null;
@@ -258,6 +273,11 @@ export default function AdminContentScreen() {
   });
   const setDraftWorkflow = draftWorkflow.setDraft;
   const workflowDraft = draftWorkflow.draft;
+  const currentListeningAudioUrl =
+    workflowDraft.listening?.audioUrl?.trim() || activeLesson?.audio_url || "";
+  const resolvedListeningAudioUrl = resolveBackendAudioUrl(
+    currentListeningAudioUrl,
+  );
 
   const defaultAmbientIds = useMemo(
     () => ambientOptions.slice(0, 2).map((item) => item.id),
@@ -510,7 +530,9 @@ export default function AdminContentScreen() {
           workflowDraft.listening?.titleJa ||
           "",
         audioUrl:
-          activeLesson?.audio_url || workflowDraft.listening?.audioUrl || "",
+          workflowDraft.listening?.audioUrl?.trim() ||
+          activeLesson?.audio_url ||
+          "",
         durationSeconds:
           activeLesson?.duration_seconds ??
           workflowDraft.listening?.durationSeconds ??
@@ -619,7 +641,18 @@ export default function AdminContentScreen() {
   );
 
   const activeDurationLabel = formatDuration(activeLesson?.duration_seconds);
-  const activeAudioFileName = getAudioFileName(activeLesson?.audio_url);
+  const activeAudioFileName = getAudioFileName(currentListeningAudioUrl);
+
+  useEffect(() => {
+    return () => {
+      listeningAudioRef.current?.pause();
+      listeningAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    listeningAudioRef.current?.pause();
+  }, [resolvedListeningAudioUrl]);
 
   const startEditRow = (row: (typeof listeningRows)[number]) => {
     setEditingRow(row.index);
@@ -723,7 +756,9 @@ export default function AdminContentScreen() {
           workflowDraft.listening?.titleJa ||
           "",
         audioUrl:
-          activeLesson?.audio_url || workflowDraft.listening?.audioUrl || "",
+          workflowDraft.listening?.audioUrl?.trim() ||
+          activeLesson?.audio_url ||
+          "",
         durationSeconds:
           activeLesson?.duration_seconds ??
           workflowDraft.listening?.durationSeconds ??
@@ -793,6 +828,119 @@ export default function AdminContentScreen() {
       saveAdminContentDraftToBrowser(nextDraft);
       return nextDraft;
     });
+  };
+
+  const toggleListeningPlayback = async () => {
+    if (!resolvedListeningAudioUrl) {
+      setAudioUploadError("Chưa có file audio để phát.");
+      return;
+    }
+
+    setAudioUploadError(null);
+
+    let audio = listeningAudioRef.current;
+    if (!audio || audio.src !== resolvedListeningAudioUrl) {
+      audio?.pause();
+      audio = new Audio(resolvedListeningAudioUrl);
+      audio.preload = "auto";
+      audio.onended = () => setIsListeningPlaying(false);
+      audio.onpause = () => setIsListeningPlaying(false);
+      audio.onerror = () => {
+        setIsListeningPlaying(false);
+        setAudioUploadError("Không phát được file audio này.");
+      };
+      listeningAudioRef.current = audio;
+    }
+
+    if (audio.paused) {
+      try {
+        await audio.play();
+        setIsListeningPlaying(true);
+      } catch (error) {
+        console.error("Failed to play listening audio", error);
+        setIsListeningPlaying(false);
+        setAudioUploadError("Trình duyệt đã chặn phát audio hoặc file lỗi.");
+      }
+      return;
+    }
+
+    audio.pause();
+  };
+
+  const openAudioFilePicker = () => {
+    setAudioUploadError(null);
+    audioFileInputRef.current?.click();
+  };
+
+  const handleAudioFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setPendingAudioFile(file);
+    setAudioUploadError(null);
+  };
+
+  const handleUploadAudioFile = async () => {
+    if (!activeLearningUnitId) {
+      setAudioUploadError("Chưa chọn learning unit để cập nhật audio.");
+      return;
+    }
+
+    if (!pendingAudioFile) {
+      setAudioUploadError("Hãy chọn một file audio trước khi tải lên.");
+      return;
+    }
+
+    setIsUploadingAudio(true);
+    setAudioUploadError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", pendingAudioFile);
+
+      const result = await apiFetch<{ audioUrl: string }>(
+        "/listening/admin/upload-audio",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      const nextAudioUrl = result.audioUrl;
+
+      setDraftWorkflow((currentDraft) => {
+        const nextDraft: AdminContentDraftPayload = {
+          ...currentDraft,
+          listening: {
+            ...(currentDraft.listening ?? {
+              titleVi: "",
+              titleJa: "",
+              audioUrl: "",
+              durationSeconds: 0,
+              description: "",
+              transcriptLines: [],
+            }),
+            audioUrl: nextAudioUrl,
+          },
+        };
+
+        saveAdminContentDraftToBrowser(nextDraft);
+        return nextDraft;
+      });
+
+      setActiveLesson((currentLesson) =>
+        currentLesson ? { ...currentLesson, audio_url: nextAudioUrl } : currentLesson,
+      );
+      setPendingAudioFile(null);
+      setListeningModal(null);
+      setLocationToast("Đã tải lên file audio mới.");
+      window.setTimeout(() => setLocationToast(null), 2400);
+    } catch (error) {
+      console.error("Failed to upload audio file", error);
+      setAudioUploadError(
+        error instanceof Error ? error.message : "Không thể tải lên file audio.",
+      );
+    } finally {
+      setIsUploadingAudio(false);
+    }
   };
 
   const handleConfirmDelete = () => {
@@ -1459,9 +1607,15 @@ export default function AdminContentScreen() {
                             <div className="flex items-center gap-3">
                               <button
                                 type="button"
+                                onClick={toggleListeningPlayback}
+                                disabled={!resolvedListeningAudioUrl}
                                 className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50]"
                               >
-                                <PlayIcon className="h-4 w-4" />
+                                <PlayIcon
+                                  className={`h-4 w-4 ${
+                                    isListeningPlaying ? "opacity-60" : ""
+                                  }`}
+                                />
                               </button>
                               <div className="flex-1">
                                 <div className="h-2 w-full rounded-full bg-[#5f7a71]">
@@ -1843,6 +1997,13 @@ export default function AdminContentScreen() {
             </div>
 
             <div className="px-6 pb-6 pt-4 text-xs text-[#7b8b83]">
+              <input
+                ref={audioFileInputRef}
+                type="file"
+                accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4"
+                className="hidden"
+                onChange={handleAudioFileChange}
+              />
               <div className="space-y-3">
                 <p className="text-[11px] font-semibold text-[#9aa8a2]">
                   FILE HIỆN TẠI
@@ -1877,15 +2038,30 @@ export default function AdminContentScreen() {
                   </div>
                   <p className="mt-4 text-xs text-[#7b8b83]">
                     Kéo thả file vào đây hoặc{" "}
-                    <span className="font-semibold text-[#2f5d50]">
+                    <button
+                      type="button"
+                      onClick={openAudioFilePicker}
+                      className="font-semibold text-[#2f5d50]"
+                    >
                       chọn file
-                    </span>
+                    </button>
                   </p>
                   <p className="mt-2 text-[11px] text-[#9aa8a2]">
                     MP3, WAV, M4A · Tối đa 50MB
                   </p>
+                  {pendingAudioFile ? (
+                    <p className="mt-2 text-[11px] font-semibold text-[#1f2b27]">
+                      Đã chọn: {pendingAudioFile.name}
+                    </p>
+                  ) : null}
                 </div>
               </div>
+
+              {audioUploadError ? (
+                <p className="mt-4 text-[11px] font-semibold text-[#c65d5d]">
+                  {audioUploadError}
+                </p>
+              ) : null}
 
               <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#f1d6a7] bg-[#fff8e8] px-4 py-3 text-[11px] text-[#b4771e]">
                 <WarningIcon className="mt-0.5 h-4 w-4" />
@@ -1906,10 +2082,12 @@ export default function AdminContentScreen() {
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-[#b6c4bf] px-4 py-2 text-xs font-semibold text-white"
+                onClick={handleUploadAudioFile}
+                disabled={isUploadingAudio || !pendingAudioFile}
+                className="inline-flex items-center gap-2 rounded-full bg-[#2f5d50] px-4 py-2 text-xs font-semibold text-white disabled:opacity-60"
               >
                 <UploadIcon className="h-4 w-4" />
-                Xác nhận thay
+                {isUploadingAudio ? "Đang tải lên..." : "Xác nhận thay"}
               </button>
             </div>
           </div>

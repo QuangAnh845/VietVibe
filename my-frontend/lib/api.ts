@@ -1,6 +1,6 @@
 import { ErrorHandler } from './error-handler';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 const TOKEN_KEY = 'access_token';
 const LEGACY_TOKEN_KEY = 'auth_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
@@ -57,7 +57,11 @@ export async function apiFetch<T>(
   }
 
   // Set default content type if not set
-  if (!headers.has('Content-Type') && fetchOptions.body) {
+  if (
+    !headers.has('Content-Type') &&
+    fetchOptions.body &&
+    !(fetchOptions.body instanceof FormData)
+  ) {
     headers.set('Content-Type', 'application/json');
   }
 
