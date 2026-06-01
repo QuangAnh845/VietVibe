@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { apiCall } from "@/lib/api";
+import { getAdminContentDraftFromBrowser } from "@/lib/admin-content-draft-workflow";
 import type { AdminContentDraftPayload } from "@/lib/admin-content-draft-workflow";
 import { AutoSaveIndicator } from "./auto-save-indicator";
 import { useAdminContentDraftWorkflow } from "../hooks/use-admin-content-draft-workflow";
@@ -230,6 +231,110 @@ export default function AdminContentScreen() {
   const [deleteVocabIndex, setDeleteVocabIndex] = useState<string | null>(null);
   const [vocabToast, setVocabToast] = useState<string | null>(null);
   const draftWorkflow = useAdminContentDraftWorkflow({ delay: 2000 });
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [selectedAudioFile, setSelectedAudioFile] = useState<File | null>(null);
+  const uploadAbortControllerRef = useRef<AbortController | null>(null);
+
+  const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedAudioFile(e.target.files[0]);
+    }
+  };
+
+  const handleDropAudio = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setSelectedAudioFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleDragOverAudio = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const handleConfirmReplaceAudio = async () => {
+    if (!selectedAudioFile || !activeUnit) return;
+    
+    setUploadingAudio(true);
+    const controller = new AbortController();
+    uploadAbortControllerRef.current = controller;
+    try {
+      const audioObj = new Audio(URL.createObjectURL(selectedAudioFile));
+      const durationPromise = new Promise<number>((resolve) => {
+        audioObj.onloadedmetadata = () => resolve(audioObj.duration);
+        audioObj.onerror = () => resolve(0);
+      });
+
+      const formData = new FormData();
+      formData.append("file", selectedAudioFile);
+
+      const [response, duration] = await Promise.all([
+        apiCall<{ audioUrl: string }>("/listening/admin/upload-audio", {
+          method: "POST",
+          body: formData as any,
+          signal: controller.signal,
+        }),
+        durationPromise
+      ]);
+
+      if (response.audioUrl) {
+        const roundedDuration = Math.round(duration) || 0;
+        
+        setDetailError(null);
+        setActiveLesson((prev) => {
+          if (prev) {
+            return {
+              ...prev,
+              audio_url: response.audioUrl,
+              duration_seconds: roundedDuration,
+            };
+          }
+          return {
+            title_vi: activeUnit?.title || "",
+            title_ja: activeUnit?.title || "",
+            audio_url: response.audioUrl,
+            duration_seconds: roundedDuration,
+            transcriptLines: [],
+          };
+        });
+        
+        draftWorkflow.setDraft((currentDraft) => ({
+          ...currentDraft,
+          listening: {
+            ...(currentDraft.listening ?? {
+              titleVi: activeUnit?.title || "",
+              titleJa: activeUnit?.title || "",
+              audioUrl: "",
+              durationSeconds: 0,
+              description: "",
+              transcriptLines: [],
+            }),
+            audioUrl: response.audioUrl,
+            durationSeconds: roundedDuration,
+          },
+        }));
+
+        setListeningModal(null);
+        setSelectedAudioFile(null);
+      }
+    } catch (error) {
+      console.error("Audio upload failed", error);
+      setLocationToast(error instanceof Error ? error.message : "Tải file lên thất bại.");
+      window.setTimeout(() => setLocationToast(null), 3000);
+    } finally {
+      setUploadingAudio(false);
+      uploadAbortControllerRef.current = null;
+    }
+  };
+
+  const handleCloseReplaceAudio = () => {
+    if (uploadingAudio) {
+      uploadAbortControllerRef.current?.abort();
+      setUploadingAudio(false);
+    }
+    setListeningModal(null);
+    setSelectedAudioFile(null);
+  };
 
   const activeLocation = useMemo(() => {
     if (!selectedUnit) return null;
@@ -248,7 +353,7 @@ export default function AdminContentScreen() {
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
-  const defaultAmbientIds = ambientOptions.slice(0, 2).map((item) => item.id);
+  const defaultAmbientIds = useMemo(() => ambientOptions.slice(0, 2).map((item) => item.id), [ambientOptions]);
   const selectedAmbientIds =
     draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
@@ -307,6 +412,12 @@ export default function AdminContentScreen() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      uploadAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
 
     const loadUnitDetails = async () => {
@@ -334,43 +445,91 @@ export default function AdminContentScreen() {
         setDetailLoading(true);
         setDetailError(null);
 
-        const [lesson, vocab] = await Promise.all([
-          apiCall<ListeningLessonResponse>(
+        let backendLesson: ListeningLessonResponse | null = null;
+        let backendVocab: VocabLearningUnitResponse = { data: [] };
+
+        try {
+          backendLesson = await apiCall<ListeningLessonResponse>(
             `/listening/learning-unit/${activeLearningUnitId}`,
-          ),
-          apiCall<VocabLearningUnitResponse>(
+          );
+        } catch (err) {
+          console.warn("No backend lesson found", err);
+        }
+
+        try {
+          backendVocab = await apiCall<VocabLearningUnitResponse>(
             `/vocabulary/learning-unit/${activeLearningUnitId}`,
-          ),
-        ]);
+          );
+        } catch (err) {
+          console.warn("No backend vocab found", err);
+        }
 
-        const transcriptLines = Array.isArray(lesson.transcriptLines)
-          ? lesson.transcriptLines
-          : [];
-        const nextListeningRows = transcriptLines.map((line, index) => ({
-          index: String(index + 1),
-          vi: line.text_vi ?? "",
-          jp: line.text_ja ?? "",
-          timestamp: formatTimestamp(line.start_time ?? 0),
-          endTimeSeconds: line.end_time,
-        }));
-
-        const vocabCards = Array.isArray(vocab.data) ? vocab.data : [];
-        const nextVocabRows = vocabCards.map((card, index) => ({
-          id: card.id,
-          index: String(index + 1),
-          term: card.wordVi ?? "",
-          type: card.tag ?? "",
-          meaning: card.meaningJa ?? "",
-          example: card.exampleVi ?? "",
-          pronunciation: card.note ?? "",
-        }));
+        const draftId = `admin-content-${activeUnitId}`;
+        const localDraft = getAdminContentDraftFromBrowser(draftId);
 
         if (isMounted) {
-          setActiveLesson(lesson);
+          let nextListeningRows: ScriptRow[] = [];
+          let nextVocabRows: VocabRow[] = [];
+          let finalLesson: ListeningLessonResponse | null = null;
+
+          if (localDraft && localDraft.listening) {
+            finalLesson = {
+              id: localDraft.listening.lessonId,
+              title_vi: localDraft.listening.titleVi,
+              title_ja: localDraft.listening.titleJa,
+              audio_url: localDraft.listening.audioUrl,
+              duration_seconds: localDraft.listening.durationSeconds,
+            };
+
+            nextListeningRows = (localDraft.listening.transcriptLines || []).map((line) => ({
+              index: line.id || "",
+              vi: line.vi || "",
+              jp: line.jp || "",
+              timestamp: line.timestamp || "0:00",
+            }));
+
+            nextVocabRows = (localDraft.vocabCards || []).map((card, index) => ({
+              id: card.id,
+              index: String(index + 1),
+              term: card.term || "",
+              type: card.type || "",
+              meaning: card.meaning || "",
+              example: card.example || "",
+              pronunciation: card.note || "",
+            }));
+          } else {
+            if (backendLesson) {
+              finalLesson = backendLesson;
+              const transcriptLines = Array.isArray(backendLesson.transcriptLines)
+                ? backendLesson.transcriptLines
+                : [];
+              nextListeningRows = transcriptLines.map((line, index) => ({
+                index: String(index + 1),
+                vi: line.text_vi ?? "",
+                jp: line.text_ja ?? "",
+                timestamp: formatTimestamp(line.start_time ?? 0),
+                endTimeSeconds: line.end_time,
+              }));
+            }
+
+            const vocabCards = Array.isArray(backendVocab.data) ? backendVocab.data : [];
+            nextVocabRows = vocabCards.map((card, index) => ({
+              id: card.id,
+              index: String(index + 1),
+              term: card.wordVi ?? "",
+              type: card.tag ?? "",
+              meaning: card.meaningJa ?? "",
+              example: card.exampleVi ?? "",
+              pronunciation: card.note ?? "",
+            }));
+          }
+
+          setActiveLesson(finalLesson);
           setListeningRows(nextListeningRows);
           setVocabRows(nextVocabRows);
           setEditingRow(null);
           setIsAddingRow(false);
+
           setLocationsState((prev) =>
             prev.map((location) => ({
               ...location,
@@ -378,13 +537,13 @@ export default function AdminContentScreen() {
                 unit.id === activeUnitId
                   ? unit.vocabCount === nextVocabRows.length &&
                     unit.listeningCount === nextListeningRows.length &&
-                    unit.duration === formatDuration(lesson.duration_seconds)
+                    unit.duration === formatDuration(finalLesson?.duration_seconds)
                     ? unit
                     : {
                         ...unit,
                         vocabCount: nextVocabRows.length,
                         listeningCount: nextListeningRows.length,
-                        duration: formatDuration(lesson.duration_seconds),
+                        duration: formatDuration(finalLesson?.duration_seconds),
                       }
                   : unit,
               ),
@@ -462,7 +621,7 @@ export default function AdminContentScreen() {
         durationSeconds: lessonDurationSeconds,
         description: `Bài nghe cho tình huống ${activeUnit.title}.`,
         ambientSoundIds:
-          draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
+          currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
         transcriptLines: listeningRows.map((row) => ({
           id: row.index,
           vi: row.vi,
@@ -480,8 +639,7 @@ export default function AdminContentScreen() {
     listeningRows,
     vocabRows,
     defaultAmbientIds,
-    draftWorkflow.draft.listening?.ambientSoundIds,
-    draftWorkflow,
+    draftWorkflow.setDraft,
   ]);
 
   useEffect(() => {
@@ -1707,7 +1865,7 @@ export default function AdminContentScreen() {
       {listeningModal === "replace-audio" ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 px-6"
-          onClick={() => setListeningModal(null)}
+          onClick={handleCloseReplaceAudio}
         >
           <div
             className="w-full max-w-2xl rounded-3xl bg-white shadow-[0_20px_40px_rgba(0,0,0,0.18)]"
@@ -1720,7 +1878,7 @@ export default function AdminContentScreen() {
               </div>
               <button
                 type="button"
-                onClick={() => setListeningModal(null)}
+                onClick={handleCloseReplaceAudio}
                 className="text-[#9aa8a2]"
                 aria-label="Close"
               >
@@ -1757,19 +1915,35 @@ export default function AdminContentScreen() {
                 <p className="text-[11px] font-semibold text-[#9aa8a2]">
                   FILE MỚI
                 </p>
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-7 text-center">
+                <div 
+                  className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-7 text-center"
+                  onDrop={handleDropAudio}
+                  onDragOver={handleDragOverAudio}
+                >
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef2ee] text-[#7b8b83]">
                     <UploadIcon className="h-5 w-5" />
                   </div>
                   <p className="mt-4 text-xs text-[#7b8b83]">
                     Kéo thả file vào đây hoặc{" "}
-                    <span className="font-semibold text-[#2f5d50]">
+                    <label htmlFor="audio-upload" className="font-semibold text-[#2f5d50] cursor-pointer">
                       chọn file
-                    </span>
+                    </label>
+                    <input 
+                      type="file" 
+                      accept=".mp3,.wav,.m4a" 
+                      className="hidden" 
+                      id="audio-upload"
+                      onChange={handleAudioFileChange}
+                    />
                   </p>
                   <p className="mt-2 text-[11px] text-[#9aa8a2]">
                     MP3, WAV, M4A · Tối đa 50MB
                   </p>
+                  {selectedAudioFile && (
+                    <p className="mt-2 text-xs font-semibold text-[#2f5d50]">
+                      Đã chọn: {selectedAudioFile.name}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1785,16 +1959,24 @@ export default function AdminContentScreen() {
             <div className="flex items-center justify-end gap-4 border-t border-[#f0f2f0] px-6 py-4">
               <button
                 type="button"
-                onClick={() => setListeningModal(null)}
+                onClick={handleCloseReplaceAudio}
                 className="text-sm font-semibold text-[#7b8b83]"
               >
                 Hủy
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-[#b6c4bf] px-4 py-2 text-xs font-semibold text-white"
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white ${
+                  !selectedAudioFile || uploadingAudio ? "bg-[#b6c4bf] cursor-not-allowed" : "bg-[#2f5d50]"
+                }`}
+                onClick={handleConfirmReplaceAudio}
+                disabled={!selectedAudioFile || uploadingAudio}
               >
-                <UploadIcon className="h-4 w-4" />
+                {uploadingAudio ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  <UploadIcon className="h-4 w-4" />
+                )}
                 Xác nhận thay
               </button>
             </div>
