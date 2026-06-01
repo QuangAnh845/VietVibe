@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { apiCall } from "@/lib/api";
-import type { AdminContentDraftPayload } from "@/lib/admin-content-draft-workflow";
+import {
+  getAdminContentDraftFromBrowser,
+  saveAdminContentDraftToBrowser,
+  type AdminContentDraftPayload,
+} from "@/lib/admin-content-draft-workflow";
 import { AutoSaveIndicator } from "./auto-save-indicator";
 import { useAdminContentDraftWorkflow } from "../hooks/use-admin-content-draft-workflow";
 import AdminSidebar from "./admin-sidebar";
@@ -229,7 +233,6 @@ export default function AdminContentScreen() {
   const [vocabToEditIndex, setVocabToEditIndex] = useState<string | null>(null);
   const [deleteVocabIndex, setDeleteVocabIndex] = useState<string | null>(null);
   const [vocabToast, setVocabToast] = useState<string | null>(null);
-  const draftWorkflow = useAdminContentDraftWorkflow({ delay: 2000 });
 
   const activeLocation = useMemo(() => {
     if (!selectedUnit) return null;
@@ -248,9 +251,20 @@ export default function AdminContentScreen() {
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
-  const defaultAmbientIds = ambientOptions.slice(0, 2).map((item) => item.id);
+
+  const draftWorkflow = useAdminContentDraftWorkflow({
+    delay: 2000,
+    draftKey: activeUnitId ? `admin-content-${activeUnitId}` : undefined,
+  });
+  const setDraftWorkflow = draftWorkflow.setDraft;
+  const workflowDraft = draftWorkflow.draft;
+
+  const defaultAmbientIds = useMemo(
+    () => ambientOptions.slice(0, 2).map((item) => item.id),
+    [ambientOptions],
+  );
   const selectedAmbientIds =
-    draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
+    workflowDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
   const filteredLocations = useMemo(() => {
     const normalized = contentQuery.trim().toLowerCase();
@@ -343,25 +357,46 @@ export default function AdminContentScreen() {
           ),
         ]);
 
-        const transcriptLines = Array.isArray(lesson.transcriptLines)
-          ? lesson.transcriptLines
-          : [];
-        const nextListeningRows = transcriptLines.map((line, index) => ({
-          index: String(index + 1),
-          vi: line.text_vi ?? "",
-          jp: line.text_ja ?? "",
-          timestamp: formatTimestamp(line.start_time ?? 0),
-          endTimeSeconds: line.end_time,
-        }));
+        const draftContentId = `admin-content-${activeUnitId}`;
+        const storedDraft = getAdminContentDraftFromBrowser(draftContentId);
 
-        const vocabCards = Array.isArray(vocab.data) ? vocab.data : [];
+        const nextListeningRows = storedDraft?.listening?.transcriptLines?.length
+          ? storedDraft.listening.transcriptLines.map((line, index) => ({
+              index: String(index + 1),
+              vi: line.vi,
+              jp: line.jp ?? "",
+              timestamp: line.timestamp ?? "0:00",
+              endTimeSeconds: line.endTime,
+            }))
+          : Array.isArray(lesson.transcriptLines)
+            ? lesson.transcriptLines.map((line, index) => ({
+                index: String(index + 1),
+                vi: line.text_vi ?? "",
+                jp: line.text_ja ?? "",
+                timestamp: formatTimestamp(line.start_time ?? 0),
+                endTimeSeconds: line.end_time,
+              }))
+            : [];
+
+        const vocabCards = storedDraft?.vocabCards?.length
+          ? storedDraft.vocabCards
+          : Array.isArray(vocab.data)
+            ? vocab.data.map((card) => ({
+                id: card.id,
+                term: card.wordVi ?? "",
+                type: card.tag ?? "",
+                meaning: card.meaningJa ?? "",
+                example: card.exampleVi ?? "",
+                note: card.note ?? "",
+              }))
+            : [];
         const nextVocabRows = vocabCards.map((card, index) => ({
           id: card.id,
           index: String(index + 1),
-          term: card.wordVi ?? "",
-          type: card.tag ?? "",
-          meaning: card.meaningJa ?? "",
-          example: card.exampleVi ?? "",
+          term: card.term,
+          type: card.type ?? "",
+          meaning: card.meaning,
+          example: card.example ?? "",
           pronunciation: card.note ?? "",
         }));
 
@@ -371,6 +406,9 @@ export default function AdminContentScreen() {
           setVocabRows(nextVocabRows);
           setEditingRow(null);
           setIsAddingRow(false);
+          if (storedDraft) {
+            setDraftWorkflow(storedDraft);
+          }
           setLocationsState((prev) =>
             prev.map((location) => ({
               ...location,
@@ -413,7 +451,13 @@ export default function AdminContentScreen() {
     return () => {
       isMounted = false;
     };
-  }, [activeUnitId, activeLearningUnitId, activeLocationId, activeUnitTitle]);
+  }, [
+    activeUnitId,
+    activeLearningUnitId,
+    activeLocationId,
+    activeUnitTitle,
+    setDraftWorkflow,
+  ]);
 
   useEffect(() => {
     if (!activeUnit || !activeLocation) {
@@ -422,10 +466,8 @@ export default function AdminContentScreen() {
 
     const lessonTitleVi = activeLesson?.title_vi || activeUnit.title;
     const lessonTitleJa = activeLesson?.title_ja || activeUnit.title;
-    const lessonAudioUrl = activeLesson?.audio_url || "";
-    const lessonDurationSeconds = activeLesson?.duration_seconds ?? 0;
 
-    draftWorkflow.setDraft((currentDraft) => ({
+    setDraftWorkflow((currentDraft) => ({
       ...currentDraft,
       contentId: `admin-content-${activeUnit.id}`,
       status:
@@ -455,14 +497,19 @@ export default function AdminContentScreen() {
         note: row.pronunciation,
       })),
       listening: {
-        lessonId: activeLessonId ?? undefined,
-        titleVi: lessonTitleVi,
-        titleJa: lessonTitleJa,
-        audioUrl: lessonAudioUrl,
-        durationSeconds: lessonDurationSeconds,
-        description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-        ambientSoundIds:
-          draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
+        lessonId: activeLessonId ?? workflowDraft.listening?.lessonId,
+        titleVi:
+          activeLesson?.title_vi || activeUnit?.title || workflowDraft.listening?.titleVi || "",
+        titleJa:
+          activeLesson?.title_ja || activeUnit?.title || workflowDraft.listening?.titleJa || "",
+        audioUrl:
+          activeLesson?.audio_url || workflowDraft.listening?.audioUrl || "",
+        durationSeconds:
+          activeLesson?.duration_seconds ?? workflowDraft.listening?.durationSeconds ?? 0,
+        description:
+          workflowDraft.listening?.description ||
+          `Bài nghe cho tình huống ${activeUnit.title}.`,
+        ambientSoundIds: workflowDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
         transcriptLines: listeningRows.map((row) => ({
           id: row.index,
           vi: row.vi,
@@ -480,8 +527,14 @@ export default function AdminContentScreen() {
     listeningRows,
     vocabRows,
     defaultAmbientIds,
-    draftWorkflow.draft.listening?.ambientSoundIds,
-    draftWorkflow,
+    workflowDraft.listening?.ambientSoundIds,
+    workflowDraft.listening?.lessonId,
+    workflowDraft.listening?.titleVi,
+    workflowDraft.listening?.titleJa,
+    workflowDraft.listening?.audioUrl,
+    workflowDraft.listening?.durationSeconds,
+    workflowDraft.listening?.description,
+    setDraftWorkflow,
   ]);
 
   useEffect(() => {
@@ -574,6 +627,11 @@ export default function AdminContentScreen() {
 
   const applyLocalListeningRows = (nextRows: ScriptRow[]) => {
     setListeningRows(nextRows);
+    const nextDraft = buildCurrentDraftSnapshot({
+      listeningRowsOverride: nextRows,
+    });
+    setDraftWorkflow(nextDraft);
+    saveAdminContentDraftToBrowser(nextDraft);
     setLocationsState((prev) =>
       prev.map((location) => ({
         ...location,
@@ -606,53 +664,71 @@ export default function AdminContentScreen() {
     );
   };
 
-  const buildCurrentDraftSnapshot = (): AdminContentDraftPayload => ({
-    ...draftWorkflow.draft,
-    contentId: `admin-content-${activeUnit?.id ?? draftWorkflow.draft.contentId}`,
-    status:
-      draftWorkflow.draft.status === "PUBLISHED"
-        ? "PUBLISHED"
-        : "DRAFT",
-    placeId: activeLocation?.id ?? draftWorkflow.draft.placeId,
-    placeNameVi: activeLocation?.label ?? draftWorkflow.draft.placeNameVi,
-    placeNameJa: activeLocation?.label ?? draftWorkflow.draft.placeNameJa,
-    situationId: activeUnit?.id ?? draftWorkflow.draft.situationId,
-    situationTitleVi: activeUnit?.title ?? draftWorkflow.draft.situationTitleVi,
-    situationTitleJa: activeUnit?.title ?? draftWorkflow.draft.situationTitleJa,
-    learningUnitId: activeLearningUnitId ?? draftWorkflow.draft.learningUnitId,
-    titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.titleVi,
-    titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.titleJa,
-    description:
-      draftWorkflow.draft.description ||
-      `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit?.title ?? ""}.`,
-    vocabCards: vocabRows.map((row) => ({
-      id: row.id,
-      term: row.term,
-      type: row.type,
-      meaning: row.meaning,
-      example: row.example,
-      note: row.pronunciation,
-    })),
-    listening: {
-      lessonId: activeLessonId ?? draftWorkflow.draft.listening?.lessonId,
-      titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.listening?.titleVi || "",
-      titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.listening?.titleJa || "",
-      audioUrl: activeLesson?.audio_url || draftWorkflow.draft.listening?.audioUrl || "",
-      durationSeconds:
-        activeLesson?.duration_seconds ?? draftWorkflow.draft.listening?.durationSeconds ?? 0,
+  const buildCurrentDraftSnapshot = (options?: {
+    listeningRowsOverride?: ScriptRow[];
+    ambientSoundIdsOverride?: string[];
+  }): AdminContentDraftPayload => {
+    const nextListeningRows = options?.listeningRowsOverride ?? listeningRows;
+    const nextAmbientSoundIds =
+      options?.ambientSoundIdsOverride ??
+      workflowDraft.listening?.ambientSoundIds ??
+      defaultAmbientIds;
+
+    return {
+      ...workflowDraft,
+      contentId: `admin-content-${activeUnit?.id ?? workflowDraft.contentId}`,
+      status: workflowDraft.status === "PUBLISHED" ? "PUBLISHED" : "DRAFT",
+      placeId: activeLocation?.id ?? workflowDraft.placeId,
+      placeNameVi: activeLocation?.label ?? workflowDraft.placeNameVi,
+      placeNameJa: activeLocation?.label ?? workflowDraft.placeNameJa,
+      situationId: activeUnit?.id ?? workflowDraft.situationId,
+      situationTitleVi: activeUnit?.title ?? workflowDraft.situationTitleVi,
+      situationTitleJa: activeUnit?.title ?? workflowDraft.situationTitleJa,
+      learningUnitId: activeLearningUnitId ?? workflowDraft.learningUnitId,
+      titleVi:
+        activeLesson?.title_vi || activeUnit?.title || workflowDraft.titleVi,
+      titleJa:
+        activeLesson?.title_ja || activeUnit?.title || workflowDraft.titleJa,
       description:
-        draftWorkflow.draft.listening?.description ||
-        `Bài nghe cho tình huống ${activeUnit?.title ?? ""}.`,
-      ambientSoundIds:
-        draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds,
-      transcriptLines: listeningRows.map((row) => ({
-        id: row.index,
-        vi: row.vi,
-        jp: row.jp,
-        timestamp: row.timestamp,
+        workflowDraft.description ||
+        `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit?.title ?? ""}.`,
+      vocabCards: vocabRows.map((row) => ({
+        id: row.id,
+        term: row.term,
+        type: row.type,
+        meaning: row.meaning,
+        example: row.example,
+        note: row.pronunciation,
       })),
-    },
-  });
+      listening: {
+        lessonId: activeLessonId ?? workflowDraft.listening?.lessonId,
+        titleVi:
+          activeLesson?.title_vi ||
+          activeUnit?.title ||
+          workflowDraft.listening?.titleVi || "",
+        titleJa:
+          activeLesson?.title_ja ||
+          activeUnit?.title ||
+          workflowDraft.listening?.titleJa || "",
+        audioUrl:
+          activeLesson?.audio_url || workflowDraft.listening?.audioUrl || "",
+        durationSeconds:
+          activeLesson?.duration_seconds ??
+          workflowDraft.listening?.durationSeconds ??
+          0,
+        description:
+          workflowDraft.listening?.description ||
+          `Bài nghe cho tình huống ${activeUnit?.title ?? ""}.`,
+        ambientSoundIds: nextAmbientSoundIds,
+        transcriptLines: nextListeningRows.map((row) => ({
+          id: row.index,
+          vi: row.vi,
+          jp: row.jp,
+          timestamp: row.timestamp,
+        })),
+      },
+    };
+  };
 
   const saveNewRow = () => {
     const nextRows = [
@@ -680,14 +756,14 @@ export default function AdminContentScreen() {
   };
 
   const toggleAmbientSelection = (id: string) => {
-    draftWorkflow.setDraft((currentDraft) => {
+    setDraftWorkflow((currentDraft) => {
       const currentAmbientIds =
         currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
       const nextAmbientIds = currentAmbientIds.includes(id)
         ? currentAmbientIds.filter((item) => item !== id)
         : [...currentAmbientIds, id];
 
-      return {
+      const nextDraft = {
         ...currentDraft,
         listening: {
           ...(currentDraft.listening ?? {
@@ -701,6 +777,9 @@ export default function AdminContentScreen() {
           ambientSoundIds: nextAmbientIds,
         },
       };
+
+      saveAdminContentDraftToBrowser(nextDraft);
+      return nextDraft;
     });
   };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AdminContentDraftPayload,
   createAdminContentDraftId,
@@ -14,12 +14,14 @@ import { useAutoSave } from "./use-auto-save";
 type UseAdminContentDraftWorkflowOptions = {
   initialDraft?: Partial<AdminContentDraftPayload>;
   delay?: number;
+  draftKey?: string;
 };
 
 function createEmptyDraft(
   initialDraft: Partial<AdminContentDraftPayload> = {},
+  draftKey?: string,
 ): AdminContentDraftPayload {
-  const contentId = initialDraft.contentId || createAdminContentDraftId();
+  const contentId = draftKey || initialDraft.contentId || createAdminContentDraftId();
   const storedDraft = getAdminContentDraftFromBrowser(contentId);
 
   if (storedDraft) {
@@ -55,7 +57,9 @@ function createEmptyDraft(
 export function useAdminContentDraftWorkflow(
   options: UseAdminContentDraftWorkflowOptions = {},
 ) {
-  const [draft, setDraft] = useState(() => createEmptyDraft(options.initialDraft));
+  const [draft, setDraft] = useState(() =>
+    createEmptyDraft(options.initialDraft, options.draftKey),
+  );
   const [publishError, setPublishError] = useState<Error | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
 
@@ -69,6 +73,20 @@ export function useAdminContentDraftWorkflow(
     async (nextDraft) => saveAdminContentDraftToBrowser(nextDraft),
     options.delay,
   );
+
+  useEffect(() => {
+    if (!options.draftKey) {
+      return;
+    }
+
+    setDraft((currentDraft) => {
+      if (currentDraft.contentId === options.draftKey) {
+        return currentDraft;
+      }
+
+      return createEmptyDraft(options.initialDraft, options.draftKey);
+    });
+  }, [options.draftKey, options.initialDraft]);
 
   const updateDraft = useCallback(
     (updater: (draft: AdminContentDraftPayload) => AdminContentDraftPayload) => {
