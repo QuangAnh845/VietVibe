@@ -85,10 +85,6 @@ function mapTranscriptLines(lines: ApiTranscriptLine[]): TranscriptEditorRow[] {
   }));
 }
 
-function stripTimestampPrefix(filename: string) {
-  return filename.replace(/^\d{13}-/, "");
-}
-
 export default function AdminListeningScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -121,13 +117,9 @@ export default function AdminListeningScreen() {
     learningUnitId: "",
     titleVi: "",
     titleJa: "",
-    audioUrl: "",
+    file: null as File | null,
   });
-  
-  const [uploadedAudios, setUploadedAudios] = useState<{ filename: string; url: string }[]>([]);
-  const [selectedAudioUrl, setSelectedAudioUrl] = useState("");
-  const [uploadingFile, setUploadingFile] = useState(false);
-  const [customAudioName, setCustomAudioName] = useState("");
+  const [replaceAudioFile, setReplaceAudioFile] = useState<File | null>(null);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -167,7 +159,6 @@ export default function AdminListeningScreen() {
       const nextDuration =
         detail.duration_seconds ?? detail.durationSeconds ?? 0;
       setAudioUrl(nextAudioUrl);
-      setSelectedAudioUrl(nextAudioUrl);
       setDurationSeconds(nextDuration);
       const transcript = Array.isArray(detail.transcriptLines)
         ? mapTranscriptLines(detail.transcriptLines)
@@ -196,17 +187,6 @@ export default function AdminListeningScreen() {
       .then(setPlaces)
       .catch(() => undefined);
   }, []);
-
-  const loadAudios = useCallback(async () => {
-    try {
-      const list = await api.get<{ filename: string; url: string }[]>("/listening/admin/audios");
-      setUploadedAudios(list);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    void loadAudios();
-  }, [loadAudios]);
 
   useEffect(() => {
     const learningUnitId = searchParams.get("learningUnitId");
@@ -367,12 +347,9 @@ export default function AdminListeningScreen() {
     setIsDirty(true);
   };
 
-  const uploadAudioFile = async (file: File, customName?: string) => {
+  const uploadAudioFile = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    if (customName) {
-      formData.append("customName", customName);
-    }
     const result = await api.upload<{ audioUrl: string }>(
       "/listening/admin/upload-audio",
       formData,
@@ -436,7 +413,7 @@ export default function AdminListeningScreen() {
           ...prev,
           learningUnitId: units[0].id,
           titleVi: units[0].titleVi,
-          titleJa: units[0].titleJa,
+          titleJa: units[0].titleVi,
         }));
       }
     } catch {
@@ -449,7 +426,7 @@ export default function AdminListeningScreen() {
       setError("Cần chọn learning unit và nhập tiêu đề.");
       return;
     }
-    if (!createForm.audioUrl) {
+    if (!createForm.file) {
       setError("Cần chọn file audio.");
       return;
     }
@@ -457,12 +434,13 @@ export default function AdminListeningScreen() {
     setSaving(true);
     setError(null);
     try {
-      const detectedDuration = await loadAudioDuration(createForm.audioUrl);
+      const uploadedUrl = await uploadAudioFile(createForm.file);
+      const detectedDuration = await loadAudioDuration(uploadedUrl);
       const created = await api.post<LessonDetail>("/listening/admin/create", {
         learningUnitId: createForm.learningUnitId,
         titleVi: createForm.titleVi.trim(),
         titleJa: createForm.titleJa.trim() || createForm.titleVi.trim(),
-        audioUrl: createForm.audioUrl,
+        audioUrl: uploadedUrl,
         durationSeconds: detectedDuration || 1,
         transcriptLines: [],
       });
@@ -472,7 +450,7 @@ export default function AdminListeningScreen() {
         learningUnitId: "",
         titleVi: "",
         titleJa: "",
-        audioUrl: "",
+        file: null,
       });
       await loadLessons();
       setSelectedLessonId(lessonId);
@@ -488,70 +466,29 @@ export default function AdminListeningScreen() {
     }
   };
 
-  const handleUploadNewAudio = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setUploadingFile(true);
-    try {
-      const url = await uploadAudioFile(file, customAudioName);
-      await loadAudios();
-      setSelectedAudioUrl(url);
-      setCustomAudioName("");
-      showToast("Tải lên file thành công. Hãy chọn file rồi bấm 'Xác nhận thay' để gắn vào bài nghe.");
-    } catch (e) {
-      setError("Tải lên file thất bại.");
-    } finally {
-      setUploadingFile(false);
-      event.target.value = '';
-    }
-  };
-
-  const handleRenameAudio = async () => {
-    if (!selectedAudioUrl) return;
-    const currentAudio = uploadedAudios.find(a => a.url === selectedAudioUrl);
-    const oldName = currentAudio ? stripTimestampPrefix(currentAudio.filename).replace(/\.[^/.]+$/, "") : "";
-    const newName = window.prompt("Nhập tên mới cho file audio (không cần ghi đuôi .mp3):", oldName);
-    if (!newName || !newName.trim()) return;
-
-    try {
-      const res = await api.put<{ oldUrl: string; newUrl: string }>("/listening/admin/audios/rename", {
-        oldUrl: selectedAudioUrl,
-        newName: newName.trim(),
-      });
-      await loadAudios();
-      if (audioUrl === res.oldUrl) {
-        setAudioUrl(res.newUrl);
-      }
-      setSelectedAudioUrl(res.newUrl);
-      showToast("Đã đổi tên file thành công.");
-      await loadLessons();
-      if (selectedLessonId) await loadLessonDetail(selectedLessonId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Đổi tên thất bại.");
-    }
-  };
-
-  const handleAttachAudio = async () => {
-    if (!selectedLessonId || !selectedAudioUrl) return;
+  const handleReplaceAudio = async () => {
+    if (!selectedLessonId || !replaceAudioFile) return;
     const confirmed = window.confirm(
-      "Thay file audio sẽ xóa toàn bộ timestamp hiện tại. Tiếp tục?",
+      "Thay file audio sẽ xóa toàn bộ timestamp. Tiếp tục?",
     );
     if (!confirmed) return;
 
     setSaving(true);
     setError(null);
     try {
-      const detectedDuration = await loadAudioDuration(selectedAudioUrl);
-      setAudioUrl(selectedAudioUrl);
+      const uploadedUrl = await uploadAudioFile(replaceAudioFile);
+      const detectedDuration = await loadAudioDuration(uploadedUrl);
+      setAudioUrl(uploadedUrl);
       setDurationSeconds(detectedDuration);
       setRows([]);
+      setReplaceAudioFile(null);
       await api.put(`/listening/admin/${selectedLessonId}/transcript`, {
         transcriptLines: [],
         durationSeconds: detectedDuration,
-        audioUrl: selectedAudioUrl,
+        audioUrl: uploadedUrl,
       });
       setIsDirty(false);
-      showToast("Đã gắn file audio.");
+      showToast("Đã thay file audio.");
       await loadLessonDetail(selectedLessonId);
       await loadLessons();
     } catch (replaceError) {
@@ -749,68 +686,26 @@ export default function AdminListeningScreen() {
                   </button>
                 </div>
 
-                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-dashed border-[#dfe6df] px-4 py-4 text-xs">
-                    <div className="flex items-center gap-3">
-                      <label className="font-semibold text-[#7b8b83]">
-                        Chọn audio đã upload:
-                      </label>
-                      <select
-                        value={selectedAudioUrl}
-                        onChange={(e) => setSelectedAudioUrl(e.target.value)}
-                        className="flex-1 h-9 rounded-xl border border-[#dfe6df] px-3"
-                      >
-                        <option value="">-- Chọn file audio --</option>
-                        {uploadedAudios.map(audio => (
-                          <option key={audio.url} value={audio.url}>
-                            {stripTimestampPrefix(audio.filename)}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={!selectedAudioUrl || saving}
-                        onClick={() => void handleRenameAudio()}
-                        className="rounded-full border border-[#dfe6df] px-3 py-1.5 text-[11px] font-semibold text-[#7b8b83] disabled:opacity-50 whitespace-nowrap"
-                      >
-                        ✏️ Đổi tên
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!selectedAudioUrl || saving}
-                        onClick={() => void handleAttachAudio()}
-                        className="rounded-full bg-[#b4771e] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-50 whitespace-nowrap"
-                      >
-                        Xác nhận thay
-                      </button>
-                    </div>
-                    
-                    <div className="flex flex-col gap-2 border-t border-[#f0f2f0] pt-3">
-                      <label className="font-semibold text-[#7b8b83]">
-                        Hoặc upload file mới:
-                      </label>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="text"
-                          placeholder="Tên file mới (tuỳ chọn)..."
-                          value={customAudioName}
-                          onChange={(e) => setCustomAudioName(e.target.value)}
-                          className="h-9 w-48 rounded-xl border border-[#dfe6df] px-3 text-xs"
-                          disabled={uploadingFile}
-                        />
-                        <label className="cursor-pointer rounded-xl border border-[#2f5d50] px-4 py-2 text-xs font-semibold text-[#2f5d50] hover:bg-[#eaf6ef] transition">
-                          ↑ Tải lên file mới
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept=".mp3,.wav,.m4a,audio/*"
-                            onChange={handleUploadNewAudio}
-                            disabled={uploadingFile}
-                          />
-                        </label>
-                        {uploadingFile && <span className="text-[#b4771e]">Đang tải lên...</span>}
-                      </div>
-                    </div>
-                  </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-dashed border-[#dfe6df] px-3 py-3 text-xs">
+                  <label className="font-semibold text-[#7b8b83]">
+                    Thay file audio:
+                  </label>
+                  <input
+                    type="file"
+                    accept=".mp3,.wav,.m4a,audio/*"
+                    onChange={(event) =>
+                      setReplaceAudioFile(event.target.files?.[0] ?? null)
+                    }
+                  />
+                  <button
+                    type="button"
+                    disabled={!replaceAudioFile || saving}
+                    onClick={() => void handleReplaceAudio()}
+                    className="rounded-full bg-[#b4771e] px-3 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
+                  >
+                    Xác nhận thay
+                  </button>
+                </div>
 
                 <div className="mt-4 overflow-hidden rounded-2xl border border-[#eef2ee]">
                   <table className="w-full text-left text-[11px]">
@@ -945,7 +840,7 @@ export default function AdminListeningScreen() {
                     ...prev,
                     learningUnitId: event.target.value,
                     titleVi: unit?.titleVi ?? prev.titleVi,
-                    titleJa: unit?.titleJa ?? prev.titleJa,
+                    titleJa: unit?.titleVi ?? prev.titleJa,
                   }));
                 }}
                 className="h-9 w-full rounded-xl border border-[#dfe6df] px-3"
@@ -981,43 +876,16 @@ export default function AdminListeningScreen() {
                 placeholder="Tiêu đề tiếng Nhật"
                 className="h-9 w-full rounded-xl border border-[#dfe6df] px-3"
               />
-              <select
-                value={createForm.audioUrl || ""}
-                onChange={(e) => setCreateForm(p => ({ ...p, audioUrl: e.target.value }))}
-                className="h-9 w-full rounded-xl border border-[#dfe6df] px-3"
-              >
-                <option value="">-- Chọn audio đã upload --</option>
-                {uploadedAudios.map(audio => (
-                  <option key={audio.url} value={audio.url}>{stripTimestampPrefix(audio.filename)}</option>
-                ))}
-              </select>
-              <div className="flex items-center gap-3 mt-2">
-                <label className="cursor-pointer rounded-xl border border-[#2f5d50] px-4 py-2 text-xs font-semibold text-[#2f5d50] hover:bg-[#eaf6ef] transition">
-                  ↑ Tải lên file mới
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept=".mp3,.wav,.m4a,audio/*"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) {
-                        setUploadingFile(true);
-                        uploadAudioFile(file).then(url => {
-                          loadAudios();
-                          setCreateForm(p => ({ ...p, audioUrl: url }));
-                          setUploadingFile(false);
-                        }).catch(() => {
-                          setError("Tải lên thất bại");
-                          setUploadingFile(false);
-                        });
-                      }
-                      event.target.value = "";
-                    }}
-                    disabled={uploadingFile}
-                  />
-                </label>
-                {uploadingFile && <span className="text-[#b4771e] text-xs">Đang tải lên...</span>}
-              </div>
+              <input
+                type="file"
+                accept=".mp3,.wav,.m4a,audio/*"
+                onChange={(event) =>
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    file: event.target.files?.[0] ?? null,
+                  }))
+                }
+              />
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button
