@@ -21,7 +21,8 @@ function createEmptyDraft(
   initialDraft: Partial<AdminContentDraftPayload> = {},
   draftKey?: string,
 ): AdminContentDraftPayload {
-  const contentId = draftKey || initialDraft.contentId || createAdminContentDraftId();
+  const contentId =
+    draftKey || initialDraft.contentId || createAdminContentDraftId();
   const storedDraft = getAdminContentDraftFromBrowser(contentId);
 
   if (storedDraft) {
@@ -89,7 +90,9 @@ export function useAdminContentDraftWorkflow(
   }, [options.draftKey, options.initialDraft]);
 
   const updateDraft = useCallback(
-    (updater: (draft: AdminContentDraftPayload) => AdminContentDraftPayload) => {
+    (
+      updater: (draft: AdminContentDraftPayload) => AdminContentDraftPayload,
+    ) => {
       setDraft((currentDraft) => ({
         ...updater(currentDraft),
         status: "DRAFT",
@@ -98,31 +101,34 @@ export function useAdminContentDraftWorkflow(
     [],
   );
 
-  const publish = useCallback(async (overrideDraft?: AdminContentDraftPayload) => {
-    setIsPublishing(true);
-    setPublishError(null);
+  const publish = useCallback(
+    async (overrideDraft?: AdminContentDraftPayload) => {
+      setIsPublishing(true);
+      setPublishError(null);
 
-    try {
-      autoSave.flush();
-      const result = await publishAdminContentDraft(overrideDraft ?? draft);
-      setDraft((currentDraft) => ({
-        ...currentDraft,
-        placeId: result.placeId,
-        situationId: result.situationId,
-        learningUnitId: result.learningUnitId,
-        status: "PUBLISHED",
-        publishedAt: new Date().toISOString(),
-      }));
-      return result;
-    } catch (error) {
-      const nextError =
-        error instanceof Error ? error : new Error("Publish failed");
-      setPublishError(nextError);
-      throw nextError;
-    } finally {
-      setIsPublishing(false);
-    }
-  }, [autoSave, draft]);
+      try {
+        autoSave.flush();
+        const result = await publishAdminContentDraft(overrideDraft ?? draft);
+        setDraft((currentDraft) => ({
+          ...currentDraft,
+          placeId: result.placeId,
+          situationId: result.situationId,
+          learningUnitId: result.learningUnitId,
+          status: "PUBLISHED",
+          publishedAt: new Date().toISOString(),
+        }));
+        return result;
+      } catch (error) {
+        const nextError =
+          error instanceof Error ? error : new Error("Publish failed");
+        setPublishError(nextError);
+        throw nextError;
+      } finally {
+        setIsPublishing(false);
+      }
+    },
+    [autoSave, draft],
+  );
 
   return {
     draft,

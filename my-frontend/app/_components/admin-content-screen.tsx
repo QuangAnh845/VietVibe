@@ -360,7 +360,8 @@ export default function AdminContentScreen() {
         const draftContentId = `admin-content-${activeUnitId}`;
         const storedDraft = getAdminContentDraftFromBrowser(draftContentId);
 
-        const nextListeningRows = storedDraft?.listening?.transcriptLines?.length
+        const nextListeningRows = storedDraft?.listening?.transcriptLines
+          ?.length
           ? storedDraft.listening.transcriptLines.map((line, index) => ({
               index: String(index + 1),
               vi: line.vi,
@@ -499,17 +500,26 @@ export default function AdminContentScreen() {
       listening: {
         lessonId: activeLessonId ?? workflowDraft.listening?.lessonId,
         titleVi:
-          activeLesson?.title_vi || activeUnit?.title || workflowDraft.listening?.titleVi || "",
+          activeLesson?.title_vi ||
+          activeUnit?.title ||
+          workflowDraft.listening?.titleVi ||
+          "",
         titleJa:
-          activeLesson?.title_ja || activeUnit?.title || workflowDraft.listening?.titleJa || "",
+          activeLesson?.title_ja ||
+          activeUnit?.title ||
+          workflowDraft.listening?.titleJa ||
+          "",
         audioUrl:
           activeLesson?.audio_url || workflowDraft.listening?.audioUrl || "",
         durationSeconds:
-          activeLesson?.duration_seconds ?? workflowDraft.listening?.durationSeconds ?? 0,
+          activeLesson?.duration_seconds ??
+          workflowDraft.listening?.durationSeconds ??
+          0,
         description:
           workflowDraft.listening?.description ||
           `Bài nghe cho tình huống ${activeUnit.title}.`,
-        ambientSoundIds: workflowDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
+        ambientSoundIds:
+          workflowDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
         transcriptLines: listeningRows.map((row) => ({
           id: row.index,
           vi: row.vi,
@@ -705,11 +715,13 @@ export default function AdminContentScreen() {
         titleVi:
           activeLesson?.title_vi ||
           activeUnit?.title ||
-          workflowDraft.listening?.titleVi || "",
+          workflowDraft.listening?.titleVi ||
+          "",
         titleJa:
           activeLesson?.title_ja ||
           activeUnit?.title ||
-          workflowDraft.listening?.titleJa || "",
+          workflowDraft.listening?.titleJa ||
+          "",
         audioUrl:
           activeLesson?.audio_url || workflowDraft.listening?.audioUrl || "",
         durationSeconds:
@@ -804,7 +816,9 @@ export default function AdminContentScreen() {
     setSaveStatus("saving");
 
     try {
-      const publishResult = await draftWorkflow.publish(buildCurrentDraftSnapshot());
+      const publishResult = await draftWorkflow.publish(
+        buildCurrentDraftSnapshot(),
+      );
       const vocabularyCardIds = publishResult.vocabularyCardIds;
       if (vocabularyCardIds.length > 0) {
         setVocabRows((currentRows) =>
@@ -1055,13 +1069,15 @@ export default function AdminContentScreen() {
                                       status={
                                         location.units.some(
                                           (unit) => unit.id === activeUnit?.id,
-                                        ) && draftWorkflow.draft.status ===
+                                        ) &&
+                                        draftWorkflow.draft.status ===
                                           "PUBLISHED"
                                           ? "published"
                                           : location.units.some(
                                                 (unit) =>
                                                   unit.id === activeUnit?.id,
-                                              ) && draftWorkflow.draft.publishedAt
+                                              ) &&
+                                              draftWorkflow.draft.publishedAt
                                             ? "draft"
                                             : location.status
                                       }
@@ -1109,7 +1125,9 @@ export default function AdminContentScreen() {
                                               ariaLabel="Edit"
                                               onClick={() => {
                                                 setIsEditSituationOpen(true);
-                                                setCurrentLocationId(location.id);
+                                                setCurrentLocationId(
+                                                  location.id,
+                                                );
                                                 setSituationForm({
                                                   id: unit.id,
                                                   title: unit.title,
@@ -1126,19 +1144,33 @@ export default function AdminContentScreen() {
                                                   id: `unit-${Date.now()}`,
                                                   title: `${unit.title} (Copy)`,
                                                   status: "draft" as Status,
-                                                  vocabCount: unit.vocabCount ?? 0,
-                                                  listeningCount: unit.listeningCount ?? 0,
-                                                  duration: unit.duration ?? "0:00",
+                                                  vocabCount:
+                                                    unit.vocabCount ?? 0,
+                                                  listeningCount:
+                                                    unit.listeningCount ?? 0,
+                                                  duration:
+                                                    unit.duration ?? "0:00",
                                                 };
                                                 setLocationsState((prev) =>
                                                   prev.map((l) =>
                                                     l.id === location.id
-                                                      ? { ...l, units: [...l.units, newUnit] }
+                                                      ? {
+                                                          ...l,
+                                                          units: [
+                                                            ...l.units,
+                                                            newUnit,
+                                                          ],
+                                                        }
                                                       : l,
                                                   ),
                                                 );
-                                                setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
-                                                window.setTimeout(() => setLocationToast(null), 2000);
+                                                setLocationToast(
+                                                  "Đã nhân bản tình huống (chỉ nháp).",
+                                                );
+                                                window.setTimeout(
+                                                  () => setLocationToast(null),
+                                                  2000,
+                                                );
                                               }}
                                             >
                                               <PlusIcon className="h-4 w-4" />
@@ -1148,10 +1180,11 @@ export default function AdminContentScreen() {
                                               <StatusDot
                                                 status={
                                                   unit.id === activeUnit?.id
-                                                    ? draftWorkflow.draft.status ===
-                                                      "PUBLISHED"
+                                                    ? draftWorkflow.draft
+                                                        .status === "PUBLISHED"
                                                       ? "published"
-                                                      : draftWorkflow.draft.publishedAt
+                                                      : draftWorkflow.draft
+                                                            .publishedAt
                                                         ? "draft"
                                                         : "draft"
                                                     : unit.status
@@ -1160,7 +1193,9 @@ export default function AdminContentScreen() {
                                                 onClick={(event) => {
                                                   event.stopPropagation();
                                                   setIsEditSituationOpen(true);
-                                                  setCurrentLocationId(location.id);
+                                                  setCurrentLocationId(
+                                                    location.id,
+                                                  );
                                                   setSituationForm({
                                                     id: unit.id,
                                                     title: unit.title,
