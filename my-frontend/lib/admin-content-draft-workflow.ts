@@ -318,15 +318,53 @@ async function publishVocabularyCards(
 
 async function publishListeningLesson(
   draft: AdminContentDraftPayload,
-  _learningUnitId: string,
+  learningUnitId: string,
 ) {
   const listening = draft.listening;
-  if (!listening?.lessonId) {
+  if (!listening || !listening.titleVi.trim() || !listening.audioUrl?.trim()) {
     return undefined;
   }
 
-  // Transcript timestamps are managed on /admin/listening — do not overwrite here.
-  return listening.lessonId;
+  const transcriptLines = listening.transcriptLines.map((line, index, lines) => {
+    const startTime = line.startTime ?? timestampToSeconds(line.timestamp);
+    const nextLine = lines[index + 1];
+    const nextStartTime =
+      nextLine?.startTime ?? timestampToSeconds(nextLine?.timestamp);
+    const endTime = line.endTime ?? Math.max(nextStartTime || startTime + 3, startTime + 1);
+
+    return {
+      startTime,
+      endTime,
+      textVi: line.vi,
+      textJa: line.jp || "",
+    };
+  });
+
+  const payload = {
+    learningUnitId,
+    titleVi: listening.titleVi,
+    titleJa: listening.titleJa || listening.titleVi,
+    audioUrl: listening.audioUrl,
+    durationSeconds: listening.durationSeconds || 1,
+    description: listening.description || draft.description || null,
+    transcriptLines,
+  };
+
+  if (listening.lessonId) {
+    const lesson = await api.put<{ id?: string; _id?: string }>(
+      `/listening/${listening.lessonId}`,
+      payload,
+    );
+
+    return lesson.id || lesson._id || listening.lessonId;
+  }
+
+  const lesson = await api.post<{ id?: string; _id?: string }>(
+    "/listening/admin/create",
+    payload,
+  );
+
+  return lesson.id || lesson._id;
 }
 
 export async function publishAdminContentDraft(
