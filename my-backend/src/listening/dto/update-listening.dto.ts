@@ -40,4 +40,10 @@ export class UpdateListeningDto {
   @ValidateNested({ each: true })
   @Type(() => TranscriptLineDto)
   transcriptLines?: TranscriptLineDto[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Environment sound ids allowed for this lesson' })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  ambientSoundIds?: string[];
 }

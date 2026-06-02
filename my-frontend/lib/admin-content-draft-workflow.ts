@@ -287,6 +287,24 @@ async function publishVocabularyCards(
   learningUnitId: string,
 ) {
   const createdIds: string[] = [];
+  const existingResponse = await api.get<{ data?: Array<{ id?: string }> }>(
+    `/vocabulary/learning-unit/${learningUnitId}`,
+  );
+  const existingCards = Array.isArray(existingResponse.data)
+    ? existingResponse.data
+    : [];
+  const nextCardIds = new Set(
+    draft.vocabCards.map((card) => card.id).filter((id): id is string => !!id),
+  );
+
+  await Promise.all(
+    existingCards
+      .map((card) => card.id)
+      .filter((id): id is string => Boolean(id) && !nextCardIds.has(id as string))
+      .map((id) =>
+        api.delete(`/vocabulary/admin/${id}`),
+      ),
+  );
 
   for (const card of draft.vocabCards) {
     const payload = {
@@ -357,6 +375,7 @@ async function publishListeningLesson(
     durationSeconds: listening.durationSeconds || 1,
     description: listening.description || draft.description || null,
     transcriptLines,
+    ambientSoundIds: listening.ambientSoundIds || [],
   };
 
   if (listening.lessonId) {
@@ -388,8 +407,14 @@ export async function publishAdminContentDraft(
   const listeningLessonId = await publishListeningLesson(draft, learningUnitId);
 
   if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+    const publishedVocabCards = draft.vocabCards.map((card, index) => ({
+      ...card,
+      id: vocabularyCardIds[index] ?? card.id,
+    }));
+
     const publishedDraft: AdminContentDraftPayload = {
       ...draft,
+      vocabCards: publishedVocabCards,
       status: "PUBLISHED",
       publishedAt: new Date().toISOString(),
       savedAt: new Date().toISOString(),

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { apiCall } from "@/lib/api";
+import { getAdminContentDraftFromBrowser } from "@/lib/admin-content-draft-workflow";
 import type { AdminContentDraftPayload } from "@/lib/admin-content-draft-workflow";
 import { AutoSaveIndicator } from "./auto-save-indicator";
 import { useAdminContentDraftWorkflow } from "../hooks/use-admin-content-draft-workflow";
@@ -105,6 +106,8 @@ type ListeningLessonResponse = {
   title_ja?: string;
   audio_url?: string;
   duration_seconds?: number;
+  ambient_sound_ids?: string[];
+  ambientSoundIds?: string[];
   transcriptLines?: TranscriptLineResponse[];
 };
 
@@ -253,6 +256,110 @@ export default function AdminContentScreen() {
   const [deleteVocabIndex, setDeleteVocabIndex] = useState<string | null>(null);
   const [vocabToast, setVocabToast] = useState<string | null>(null);
   const draftWorkflow = useAdminContentDraftWorkflow({ delay: 2000 });
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [selectedAudioFile, setSelectedAudioFile] = useState<File | null>(null);
+  const uploadAbortControllerRef = useRef<AbortController | null>(null);
+
+  const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedAudioFile(e.target.files[0]);
+    }
+  };
+
+  const handleDropAudio = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setSelectedAudioFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleDragOverAudio = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const handleConfirmReplaceAudio = async () => {
+    if (!selectedAudioFile || !activeUnit) return;
+    
+    setUploadingAudio(true);
+    const controller = new AbortController();
+    uploadAbortControllerRef.current = controller;
+    try {
+      const audioObj = new Audio(URL.createObjectURL(selectedAudioFile));
+      const durationPromise = new Promise<number>((resolve) => {
+        audioObj.onloadedmetadata = () => resolve(audioObj.duration);
+        audioObj.onerror = () => resolve(0);
+      });
+
+      const formData = new FormData();
+      formData.append("file", selectedAudioFile);
+
+      const [response, duration] = await Promise.all([
+        apiCall<{ audioUrl: string }>("/listening/admin/upload-audio", {
+          method: "POST",
+          body: formData as any,
+          signal: controller.signal,
+        }),
+        durationPromise
+      ]);
+
+      if (response.audioUrl) {
+        const roundedDuration = Math.round(duration) || 0;
+        
+        setDetailError(null);
+        setActiveLesson((prev) => {
+          if (prev) {
+            return {
+              ...prev,
+              audio_url: response.audioUrl,
+              duration_seconds: roundedDuration,
+            };
+          }
+          return {
+            title_vi: activeUnit?.title || "",
+            title_ja: activeUnit?.title || "",
+            audio_url: response.audioUrl,
+            duration_seconds: roundedDuration,
+            transcriptLines: [],
+          };
+        });
+        
+        draftWorkflow.setDraft((currentDraft) => ({
+          ...currentDraft,
+          listening: {
+            ...(currentDraft.listening ?? {
+              titleVi: activeUnit?.title || "",
+              titleJa: activeUnit?.title || "",
+              audioUrl: "",
+              durationSeconds: 0,
+              description: "",
+              transcriptLines: [],
+            }),
+            audioUrl: response.audioUrl,
+            durationSeconds: roundedDuration,
+          },
+        }));
+
+        setListeningModal(null);
+        setSelectedAudioFile(null);
+      }
+    } catch (error) {
+      console.error("Audio upload failed", error);
+      setLocationToast(error instanceof Error ? error.message : "Tải file lên thất bại.");
+      window.setTimeout(() => setLocationToast(null), 3000);
+    } finally {
+      setUploadingAudio(false);
+      uploadAbortControllerRef.current = null;
+    }
+  };
+
+  const handleCloseReplaceAudio = () => {
+    if (uploadingAudio) {
+      uploadAbortControllerRef.current?.abort();
+      setUploadingAudio(false);
+    }
+    setListeningModal(null);
+    setSelectedAudioFile(null);
+  };
 
   const activeLocation = useMemo(() => {
     if (!selectedUnit) return null;
@@ -272,7 +379,7 @@ export default function AdminContentScreen() {
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
-  const defaultAmbientIds = ambientOptions.slice(0, 2).map((item) => item.id);
+  const defaultAmbientIds = useMemo(() => ambientOptions.slice(0, 2).map((item) => item.id), [ambientOptions]);
   const selectedAmbientIds =
     draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
@@ -295,6 +402,89 @@ export default function AdminContentScreen() {
       ),
     );
   }, [ambientQuery, ambientOptions]);
+
+  const resolveAudioUrl = (audioUrl: string) => {
+    if (!audioUrl) return "";
+    if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    return audioUrl.startsWith("/")
+      ? `${API_BASE_URL}${audioUrl}`
+      : `${API_BASE_URL}/${audioUrl}`;
+  };
+
+  useEffect(() => {
+    const audioUrl = activeLesson?.audio_url;
+    if (!audioUrl) {
+      setIsPlayingAudio(false);
+      setAudioCurrentTime(0);
+      setAudioDuration(0);
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+      return;
+    }
+
+    const resolvedUrl = resolveAudioUrl(audioUrl);
+    const audio = new Audio(resolvedUrl);
+    previewAudioRef.current = audio;
+
+    const handlePlay = () => setIsPlayingAudio(true);
+    const handlePause = () => setIsPlayingAudio(false);
+    const handleTimeUpdate = () => {
+      setAudioCurrentTime(audio.currentTime);
+    };
+    const handleLoadedMetadata = () => {
+      setAudioDuration(audio.duration);
+    };
+    const handleEnded = () => {
+      setIsPlayingAudio(false);
+      setAudioCurrentTime(0);
+    };
+
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.pause();
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("ended", handleEnded);
+      previewAudioRef.current = null;
+    };
+  }, [activeLesson?.audio_url]);
+
+  const togglePlayAudio = () => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+
+    if (isPlayingAudio) {
+      audio.pause();
+    } else {
+      audio.play().catch((err) => {
+        console.error("Failed to play preview audio", err);
+      });
+    }
+  };
+
+  const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const bar = progressBarRef.current;
+    const audio = previewAudioRef.current;
+    if (!bar || !audio || audioDuration <= 0) return;
+
+    const rect = bar.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = percentage * audioDuration;
+
+    audio.currentTime = newTime;
+    setAudioCurrentTime(newTime);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -327,6 +517,12 @@ export default function AdminContentScreen() {
 
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      uploadAbortControllerRef.current?.abort();
     };
   }, []);
 
@@ -412,6 +608,7 @@ export default function AdminContentScreen() {
           setActiveLesson(null);
           setListeningRows([]);
           setVocabRows([]);
+          setActiveAmbientIds([]);
           setDetailError(null);
         }
         return;
@@ -431,43 +628,99 @@ export default function AdminContentScreen() {
         setDetailLoading(true);
         setDetailError(null);
 
-        const [lesson, vocab] = await Promise.all([
-          apiCall<ListeningLessonResponse>(
+        let backendLesson: ListeningLessonResponse | null = null;
+        let backendVocab: VocabLearningUnitResponse = { data: [] };
+
+        try {
+          backendLesson = await apiCall<ListeningLessonResponse>(
             `/listening/learning-unit/${activeLearningUnitId}`,
-          ),
-          apiCall<VocabLearningUnitResponse>(
+          );
+        } catch (err) {
+          console.warn("No backend lesson found", err);
+        }
+
+        try {
+          backendVocab = await apiCall<VocabLearningUnitResponse>(
             `/vocabulary/learning-unit/${activeLearningUnitId}`,
-          ),
-        ]);
+          );
+        } catch (err) {
+          console.warn("No backend vocab found", err);
+        }
 
-        const transcriptLines = Array.isArray(lesson.transcriptLines)
-          ? lesson.transcriptLines
-          : [];
-        const nextListeningRows = transcriptLines.map((line, index) => ({
-          index: String(index + 1),
-          vi: line.text_vi ?? "",
-          jp: line.text_ja ?? "",
-          timestamp: formatTimestamp(line.start_time ?? 0),
-          endTimeSeconds: line.end_time,
-        }));
-
-        const vocabCards = Array.isArray(vocab.data) ? vocab.data : [];
-        const nextVocabRows = vocabCards.map((card, index) => ({
-          id: card.id,
-          index: String(index + 1),
-          term: card.wordVi ?? "",
-          type: card.tag ?? "",
-          meaning: card.meaningJa ?? "",
-          example: card.exampleVi ?? "",
-          pronunciation: card.note ?? "",
-        }));
+        const draftId = `admin-content-${activeUnitId}`;
+        const localDraft = getAdminContentDraftFromBrowser(draftId);
 
         if (isMounted) {
-          setActiveLesson(lesson);
+          let nextListeningRows: ScriptRow[] = [];
+          let nextVocabRows: VocabRow[] = [];
+          let finalLesson: ListeningLessonResponse | null = null;
+          let loadedAmbientIds: string[] = [];
+
+          if (localDraft && localDraft.listening) {
+            finalLesson = {
+              id: localDraft.listening.lessonId,
+              title_vi: localDraft.listening.titleVi,
+              title_ja: localDraft.listening.titleJa,
+              audio_url: localDraft.listening.audioUrl,
+              duration_seconds: localDraft.listening.durationSeconds,
+            };
+
+            nextListeningRows = (localDraft.listening.transcriptLines || []).map((line) => ({
+              index: line.id || "",
+              vi: line.vi || "",
+              jp: line.jp || "",
+              timestamp: line.timestamp || "0:00",
+            }));
+
+            nextVocabRows = (localDraft.vocabCards || []).map((card, index) => ({
+              id: card.id,
+              index: String(index + 1),
+              term: card.term || "",
+              type: card.type || "",
+              meaning: card.meaning || "",
+              example: card.example || "",
+              pronunciation: card.note || "",
+            }));
+
+            loadedAmbientIds = localDraft.listening.ambientSoundIds ?? defaultAmbientIds;
+          } else {
+            if (backendLesson) {
+              finalLesson = backendLesson;
+              const transcriptLines = Array.isArray(backendLesson.transcriptLines)
+                ? backendLesson.transcriptLines
+                : [];
+              nextListeningRows = transcriptLines.map((line, index) => ({
+                index: String(index + 1),
+                vi: line.text_vi ?? "",
+                jp: line.text_ja ?? "",
+                timestamp: formatTimestamp(line.start_time ?? 0),
+                endTimeSeconds: line.end_time,
+              }));
+
+              loadedAmbientIds = backendLesson.ambient_sound_ids ?? backendLesson.ambientSoundIds ?? defaultAmbientIds;
+            } else {
+              loadedAmbientIds = defaultAmbientIds;
+            }
+
+            const vocabCards = Array.isArray(backendVocab.data) ? backendVocab.data : [];
+            nextVocabRows = vocabCards.map((card, index) => ({
+              id: card.id,
+              index: String(index + 1),
+              term: card.wordVi ?? "",
+              type: card.tag ?? "",
+              meaning: card.meaningJa ?? "",
+              example: card.exampleVi ?? "",
+              pronunciation: card.note ?? "",
+            }));
+          }
+
+          setActiveLesson(finalLesson);
           setListeningRows(nextListeningRows);
           setVocabRows(nextVocabRows);
+          setActiveAmbientIds(loadedAmbientIds.map(String));
           setEditingRow(null);
           setIsAddingRow(false);
+
           setLocationsState((prev) =>
             prev.map((location) => ({
               ...location,
@@ -475,13 +728,13 @@ export default function AdminContentScreen() {
                 unit.id === activeUnitId
                   ? unit.vocabCount === nextVocabRows.length &&
                     unit.listeningCount === nextListeningRows.length &&
-                    unit.duration === formatDuration(lesson.duration_seconds)
+                    unit.duration === formatDuration(finalLesson?.duration_seconds)
                     ? unit
                     : {
                         ...unit,
                         vocabCount: nextVocabRows.length,
                         listeningCount: nextListeningRows.length,
-                        duration: formatDuration(lesson.duration_seconds),
+                        duration: formatDuration(finalLesson?.duration_seconds),
                       }
                   : unit,
               ),
@@ -612,7 +865,7 @@ export default function AdminContentScreen() {
 
             return {
               id: placeFull.id,
-              label: placeFull.nameVi || placeFull.nameJa || "Tên mới",
+              label: placeFull.nameJa || placeFull.nameVi || "Tên mới",
               icon: "cart" as IconName,
               status: "draft" as Status,
               units: (placeFull.situations ?? []).map((situation) => {
@@ -622,7 +875,7 @@ export default function AdminContentScreen() {
                 return {
                   id: situation.id,
                   title:
-                    situation.titleVi || situation.titleJa || "Tình huống mới",
+                    situation.titleJa || situation.titleVi || "Tình huống mới",
                   status: "draft" as Status,
                   vocabCount: 0,
                   listeningCount: 0,
@@ -691,6 +944,23 @@ export default function AdminContentScreen() {
             ? {
                 ...unit,
                 listeningCount: nextRows.length,
+              }
+            : unit,
+        ),
+      })),
+    );
+  };
+
+  const applyLocalVocabRows = (nextRows: VocabRow[]) => {
+    setVocabRows(nextRows);
+    setLocationsState((prev) =>
+      prev.map((location) => ({
+        ...location,
+        units: location.units.map((unit) =>
+          unit.id === activeUnitId
+            ? {
+                ...unit,
+                vocabCount: nextRows.length,
               }
             : unit,
         ),
@@ -784,28 +1054,9 @@ export default function AdminContentScreen() {
   };
 
   const toggleAmbientSelection = (id: string) => {
-    draftWorkflow.setDraft((currentDraft) => {
-      const currentAmbientIds =
-        currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
-      const nextAmbientIds = currentAmbientIds.includes(id)
-        ? currentAmbientIds.filter((item) => item !== id)
-        : [...currentAmbientIds, id];
-
-      return {
-        ...currentDraft,
-        listening: {
-          ...(currentDraft.listening ?? {
-            titleVi: "",
-            titleJa: "",
-            audioUrl: "",
-            durationSeconds: 0,
-            description: "",
-            transcriptLines: [],
-          }),
-          ambientSoundIds: nextAmbientIds,
-        },
-      };
-    });
+    setActiveAmbientIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
   };
 
   const handleConfirmDelete = () => {
@@ -1037,6 +1288,12 @@ export default function AdminContentScreen() {
       setVocabToast(
         error instanceof Error ? error.message : "Khong the luu the tu vung.",
       );
+
+      applyLocalVocabRows(nextRows);
+      setSaveStatus("saved");
+      setVocabModal(null);
+      setVocabToEditIndex(null);
+      setVocabToast("Đã lưu nháp thẻ từ vựng.");
     }
 
     window.setTimeout(() => setVocabToast(null), 2400);
@@ -1046,39 +1303,12 @@ export default function AdminContentScreen() {
       return;
     }
 
-    const existingRow = vocabRows.find((row) => row.index === deleteVocabIndex);
-    setSaveStatus("saving");
-
-    try {
-      if (existingRow?.id) {
-        await apiCall(`/vocabulary/admin/${existingRow.id}`, {
-          method: "DELETE",
-        });
-      }
-
-      const nextRows = normalizeVocabRows(
-        vocabRows.filter((row) => row.index !== deleteVocabIndex),
-      );
-      setVocabRows(nextRows);
-      setLocationsState((prev) =>
-        prev.map((location) => ({
-          ...location,
-          units: location.units.map((unit) =>
-            unit.id === activeUnitId
-              ? { ...unit, vocabCount: nextRows.length }
-              : unit,
-          ),
-        })),
-      );
-      setSaveStatus("saved");
-      setVocabToast(`Đã xóa thẻ #${deleteVocabIndex}.`);
-    } catch (error) {
-      console.error("Failed to delete vocab", error);
-      setSaveStatus("error");
-      setVocabToast(
-        error instanceof Error ? error.message : "Không thể xóa thẻ từ vựng.",
-      );
-    }
+    const nextRows = normalizeVocabRows(
+      vocabRows.filter((row) => row.index !== deleteVocabIndex),
+    );
+    applyLocalVocabRows(nextRows);
+    setSaveStatus("saved");
+    setVocabToast(`Đã xóa nháp thẻ #${deleteVocabIndex}.`);
 
     setDeleteVocabIndex(null);
     window.setTimeout(() => setVocabToast(null), 2400);
@@ -1173,7 +1403,7 @@ export default function AdminContentScreen() {
                               : location.units;
 
                             return (
-                              <div key={location.id} className="bg-white">
+                              <div key={location.id} className="group bg-white">
                                 <div className="flex items-center justify-between px-3 py-2">
                                   <button
                                     type="button"
@@ -1199,7 +1429,7 @@ export default function AdminContentScreen() {
                                     />
                                     {location.label}
                                   </button>
-                                  <div className="flex items-center gap-2">
+                                  <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
                                     <IconButton
                                       ariaLabel="Edit"
                                       onClick={() => {
@@ -1267,35 +1497,78 @@ export default function AdminContentScreen() {
                                               unitId: unit.id,
                                             })
                                           }
-                                          className={`flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-sm transition ${
+                                          className={`group flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-sm transition ${
                                             selectedUnit?.unitId === unit.id
                                               ? "bg-(--vv-accent-soft)"
                                               : "hover:bg-[#f6f8f6]"
                                           }`}
                                         >
                                           <span>{unit.title}</span>
-                                          <StatusDot
-                                            status={
-                                              unit.id === activeUnit?.id
-                                                ? draftWorkflow.draft.status ===
-                                                  "PUBLISHED"
-                                                  ? "published"
-                                                  : draftWorkflow.draft.publishedAt
-                                                    ? "draft"
-                                                    : "draft"
-                                                : unit.status
-                                            }
-                                            ariaLabel="Edit situation"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              setIsEditSituationOpen(true);
-                                              setCurrentLocationId(location.id);
-                                              setSituationForm({
-                                                id: unit.id,
-                                                title: unit.title,
-                                              });
-                                            }}
-                                          />
+                                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <IconButton
+                                              ariaLabel="Edit"
+                                              onClick={() => {
+                                                setIsEditSituationOpen(true);
+                                                setCurrentLocationId(location.id);
+                                                setSituationForm({
+                                                  id: unit.id,
+                                                  title: unit.title,
+                                                });
+                                              }}
+                                            >
+                                              <EditIcon className="h-4 w-4" />
+                                            </IconButton>
+
+                                            <IconButton
+                                              ariaLabel="Duplicate"
+                                              onClick={() => {
+                                                const newUnit = {
+                                                  id: `unit-${Date.now()}`,
+                                                  title: `${unit.title} (Copy)`,
+                                                  status: "draft" as Status,
+                                                  vocabCount: unit.vocabCount ?? 0,
+                                                  listeningCount: unit.listeningCount ?? 0,
+                                                  duration: unit.duration ?? "0:00",
+                                                };
+                                                setLocationsState((prev) =>
+                                                  prev.map((l) =>
+                                                    l.id === location.id
+                                                      ? { ...l, units: [...l.units, newUnit] }
+                                                      : l,
+                                                  ),
+                                                );
+                                                setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
+                                                window.setTimeout(() => setLocationToast(null), 2000);
+                                              }}
+                                            >
+                                              <PlusIcon className="h-4 w-4" />
+                                            </IconButton>
+
+                                            <div>
+                                              <StatusDot
+                                                status={
+                                                  unit.id === activeUnit?.id
+                                                    ? draftWorkflow.draft.status ===
+                                                      "PUBLISHED"
+                                                      ? "published"
+                                                      : draftWorkflow.draft.publishedAt
+                                                        ? "draft"
+                                                        : "draft"
+                                                    : unit.status
+                                                }
+                                                ariaLabel="Edit situation"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  setIsEditSituationOpen(true);
+                                                  setCurrentLocationId(location.id);
+                                                  setSituationForm({
+                                                    id: unit.id,
+                                                    title: unit.title,
+                                                  });
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
                                         </button>
                                       ))}
                                       {filteredUnits.length === 0 ? (
@@ -1635,23 +1908,38 @@ export default function AdminContentScreen() {
                             <div className="flex items-center gap-3">
                               <button
                                 type="button"
+                                onClick={togglePlayAudio}
                                 className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50]"
+                                aria-label={isPlayingAudio ? "Pause" : "Play"}
                               >
-                                <PlayIcon className="h-4 w-4" />
+                                {isPlayingAudio ? (
+                                  <PauseIcon className="h-4 w-4" />
+                                ) : (
+                                  <PlayIcon className="h-4 w-4" />
+                                )}
                               </button>
                               <div className="flex-1">
-                                <div className="h-2 w-full rounded-full bg-[#5f7a71]">
-                                  <div className="h-full w-[65%] rounded-full bg-[#d7f0e5]" />
+                                <div 
+                                  ref={progressBarRef}
+                                  onClick={handleProgressBarClick}
+                                  className="h-4 flex items-center cursor-pointer group"
+                                >
+                                  <div className="h-2 w-full rounded-full bg-[#5f7a71] overflow-hidden">
+                                    <div 
+                                      className="h-full rounded-full bg-[#d7f0e5] transition-all duration-100" 
+                                      style={{ width: `${audioDuration > 0 ? (audioCurrentTime / audioDuration) * 100 : 0}%` }}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                               <div className="text-xs text-[#d7f0e5]">
-                                0:00 / {activeDurationLabel}{" "}
+                                {formatDuration(audioCurrentTime)} / {activeDurationLabel}{" "}
                                 <button
                                   type="button"
                                   onClick={() =>
                                     setListeningModal("replace-audio")
                                   }
-                                  className="underline"
+                                  className="underline ml-2"
                                 >
                                   Thay file
                                 </button>
@@ -1997,7 +2285,7 @@ export default function AdminContentScreen() {
       {listeningModal === "replace-audio" ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 px-6"
-          onClick={() => setListeningModal(null)}
+          onClick={handleCloseReplaceAudio}
         >
           <div
             className="w-full max-w-2xl rounded-3xl bg-white shadow-[0_20px_40px_rgba(0,0,0,0.18)]"
@@ -2010,7 +2298,7 @@ export default function AdminContentScreen() {
               </div>
               <button
                 type="button"
-                onClick={() => setListeningModal(null)}
+                onClick={handleCloseReplaceAudio}
                 className="text-[#9aa8a2]"
                 aria-label="Close"
               >
@@ -2047,19 +2335,35 @@ export default function AdminContentScreen() {
                 <p className="text-[11px] font-semibold text-[#9aa8a2]">
                   FILE MỚI
                 </p>
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-7 text-center">
+                <div 
+                  className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#d7dfd9] bg-[#f7f9f7] px-6 py-7 text-center"
+                  onDrop={handleDropAudio}
+                  onDragOver={handleDragOverAudio}
+                >
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef2ee] text-[#7b8b83]">
                     <UploadIcon className="h-5 w-5" />
                   </div>
                   <p className="mt-4 text-xs text-[#7b8b83]">
                     Kéo thả file vào đây hoặc{" "}
-                    <span className="font-semibold text-[#2f5d50]">
+                    <label htmlFor="audio-upload" className="font-semibold text-[#2f5d50] cursor-pointer">
                       chọn file
-                    </span>
+                    </label>
+                    <input 
+                      type="file" 
+                      accept=".mp3,.wav,.m4a" 
+                      className="hidden" 
+                      id="audio-upload"
+                      onChange={handleAudioFileChange}
+                    />
                   </p>
                   <p className="mt-2 text-[11px] text-[#9aa8a2]">
                     MP3, WAV, M4A · Tối đa 50MB
                   </p>
+                  {selectedAudioFile && (
+                    <p className="mt-2 text-xs font-semibold text-[#2f5d50]">
+                      Đã chọn: {selectedAudioFile.name}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2075,16 +2379,24 @@ export default function AdminContentScreen() {
             <div className="flex items-center justify-end gap-4 border-t border-[#f0f2f0] px-6 py-4">
               <button
                 type="button"
-                onClick={() => setListeningModal(null)}
+                onClick={handleCloseReplaceAudio}
                 className="text-sm font-semibold text-[#7b8b83]"
               >
                 Hủy
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-[#b6c4bf] px-4 py-2 text-xs font-semibold text-white"
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white ${
+                  !selectedAudioFile || uploadingAudio ? "bg-[#b6c4bf] cursor-not-allowed" : "bg-[#2f5d50]"
+                }`}
+                onClick={handleConfirmReplaceAudio}
+                disabled={!selectedAudioFile || uploadingAudio}
               >
-                <UploadIcon className="h-4 w-4" />
+                {uploadingAudio ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  <UploadIcon className="h-4 w-4" />
+                )}
                 Xác nhận thay
               </button>
             </div>
@@ -3088,7 +3400,7 @@ function IconButton({
 }: {
   children: ReactNode;
   ariaLabel: string;
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
   className?: string;
 }) {
   return (

@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -9,12 +10,17 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
   Request,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiBearerAuth,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -22,6 +28,10 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { existsSync, unlinkSync } from 'fs';
 import { AudioProcessingQueryDto } from './dto/audio-processing-query.dto';
 import { CreateListeningDto } from './dto/create-listening.dto';
 import { CreateLearningUnitDto } from './dto/create-learning-unit.dto';
@@ -55,6 +65,121 @@ export class ListeningController {
   @ApiCreatedResponse({ description: 'Listening lesson created successfully' })
   createListeningLesson(@Body() createDto: CreateListeningDto) {
     return this.listeningService.createListeningLesson(createDto);
+  }
+
+  @Post('admin/upload-audio')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Upload audio file' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiOkResponse({ description: 'Audio uploaded successfully' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './public/audios',
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          
+          let decodedName = file.originalname;
+          try {
+            decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+          } catch (e) {}
+
+          const extension = extname(decodedName).toLowerCase();
+          let baseName = decodedName.substring(0, decodedName.length - extension.length);
+          // Replace spaces and special characters with underscore to avoid URL issues
+          baseName = baseName.replace(/[^a-zA-Z0-9\u0080-\uFFFF_-]/g, '_');
+          
+          cb(null, `${baseName}-${uniqueSuffix}${extension}`);
+        },
+      }),
+      limits: {
+        fileSize: 50 * 1024 * 1024,
+      },
+      fileFilter: (req, file, cb) => {
+        const allowedExt = ['.mp3', '.wav', '.m4a'];
+        const allowedMime = [
+          'audio/mpeg',
+          'audio/mp3',
+          'audio/wav',
+          'audio/x-wav',
+          'audio/mp4',
+          'audio/x-m4a',
+        ];
+        const extension = extname(file.originalname).toLowerCase();
+
+        if (!allowedExt.includes(extension) || !allowedMime.includes(file.mimetype)) {
+          return cb(
+            new BadRequestException('Only mp3/wav/m4a files are allowed'),
+            false,
+          );
+        }
+
+        cb(null, true);
+      },
+    }),
+  )
+  uploadAudio(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    return {
+      audioUrl: `/audios/${file.filename}`,
+    };
+  }
+
+  @Delete('admin/delete-audio')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('access_token')
+  @ApiOperation({ summary: '[ADMIN] Delete an uploaded audio file' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        audioUrl: { type: 'string' },
+      },
+    },
+  })
+  async deleteAudioFile(@Body('audioUrl') audioUrl: string) {
+    if (!audioUrl) {
+      throw new BadRequestException('audioUrl is required');
+    }
+
+    if (!audioUrl.startsWith('/audios/') || audioUrl.includes('..')) {
+      throw new BadRequestException('Invalid audioUrl');
+    }
+
+    const fileName = audioUrl.replace('/audios/', '');
+    const filePath = join(__dirname, '..', '..', 'public', 'audios', fileName);
+
+    try {
+      if (existsSync(filePath)) {
+        unlinkSync(filePath);
+        return { success: true };
+      } else {
+        throw new NotFoundException('Audio file not found');
+      }
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to delete audio file: ${error.message}`);
+    }
   }
 
   @Post('admin/places')

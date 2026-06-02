@@ -1,13 +1,12 @@
 import { Suspense } from "react";
-import VocabScreen from "../_components/vocab-screen";
+_;
+
 import { ProtectedRoute } from "../components/ProtectedRoute";
 
 export default function VocabPage() {
   return (
     <ProtectedRoute>
-      <Suspense fallback={null}>
-        <VocabScreen />
-      </Suspense>
+      <Suspense fallback={null}></Suspense>
     </ProtectedRoute>
   );
 }
