@@ -406,6 +406,7 @@ export class ListeningService {
 
     return {
       ...lesson.toObject(),
+      ambientSoundIds: (lesson.ambient_sound_ids || []).map(String),
       transcriptLines,
     };
   }
@@ -424,6 +425,7 @@ export class ListeningService {
 
     return {
       ...lesson.toObject(),
+      ambientSoundIds: (lesson.ambient_sound_ids || []).map(String),
       transcriptLines,
     };
   }
@@ -441,6 +443,7 @@ export class ListeningService {
       audio_url: createDto.audioUrl,
       duration_seconds: createDto.durationSeconds,
       description: createDto.description,
+      ambient_sound_ids: createDto.ambientSoundIds || [],
     });
 
     if (createDto.transcriptLines?.length) {
@@ -483,6 +486,9 @@ export class ListeningService {
     }
     if (updateDto.description !== undefined) {
       updatePayload.description = updateDto.description;
+    }
+    if (updateDto.ambientSoundIds !== undefined) {
+      updatePayload.ambient_sound_ids = updateDto.ambientSoundIds;
     }
 
     const lessonId = this.toObjectId(id);
@@ -915,6 +921,7 @@ export class ListeningService {
       audioUrl: lesson.audio_url,
       durationSeconds: lesson.duration_seconds,
       description: lesson.description,
+      ambientSoundIds: (lesson.ambient_sound_ids || []).map(String),
       createdAt: lesson.created_at,
       updatedAt: lesson.updated_at,
       transcriptLines: transcriptLines.map((line, index) =>

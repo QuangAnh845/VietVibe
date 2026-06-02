@@ -9,6 +9,7 @@ const ListeningLessonSchema = new Schema(
     audio_url: { type: String, required: true },
     duration_seconds: { type: Number, required: true },
     description: { type: String, default: null },
+    ambient_sound_ids: { type: [{ type: Schema.Types.ObjectId, ref: 'EnvironmentSound' }], default: [] },
   },
   { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } }
 );

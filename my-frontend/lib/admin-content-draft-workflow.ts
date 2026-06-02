@@ -291,7 +291,7 @@ async function publishVocabularyCards(
   await Promise.all(
     existingCards
       .map((card) => card.id)
-      .filter((id): id is string => Boolean(id) && !nextCardIds.has(id))
+      .filter((id): id is string => Boolean(id) && !nextCardIds.has(id as string))
       .map((id) =>
         api.delete(`/vocabulary/admin/${id}`),
       ),
@@ -366,6 +366,7 @@ async function publishListeningLesson(
     durationSeconds: listening.durationSeconds || 1,
     description: listening.description || draft.description || null,
     transcriptLines,
+    ambientSoundIds: listening.ambientSoundIds || [],
   };
 
   if (listening.lessonId) {

@@ -27,6 +27,7 @@ type ListeningLesson = {
   audioUrl: string;
   durationSeconds: number;
   description?: string | null;
+  ambientSoundIds?: string[];
   transcriptLines: TranscriptLine[];
 };
 
@@ -81,6 +82,8 @@ type ApiListeningLesson = {
   duration_seconds?: number;
   durationSeconds?: number;
   description?: string | null;
+  ambient_sound_ids?: string[];
+  ambientSoundIds?: string[];
   transcriptLines?: unknown[];
 };
 
@@ -253,9 +256,19 @@ export default function ListeningScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [ambientOptions, setAmbientOptions] = useState<
+  const [allAmbientOptions, setAllAmbientOptions] = useState<
     EnvironmentSoundOption[]
   >(defaultAmbientOptions);
+
+  const ambientOptions = useMemo(() => {
+    if (!lesson) {
+      return allAmbientOptions;
+    }
+    const allowedIds = lesson.ambientSoundIds || [];
+    return allAmbientOptions.filter(
+      (opt) => opt.id === "off" || allowedIds.includes(opt.id)
+    );
+  }, [allAmbientOptions, lesson]);
   const [lineAudioUrls, setLineAudioUrls] = useState<Record<string, string>>(
     {},
   );
@@ -294,7 +307,7 @@ export default function ListeningScreen() {
               };
             });
             mapped.push({ id: "off", label: "オフ" });
-            if (mounted) setAmbientOptions(mapped);
+            if (mounted) setAllAmbientOptions(mapped);
           }
         }
       } catch (e) {
@@ -396,6 +409,7 @@ export default function ListeningScreen() {
             durationSeconds:
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
+            ambientSoundIds: (detailJson.ambient_sound_ids ?? detailJson.ambientSoundIds ?? []).map(String),
             transcriptLines: Array.isArray(detailJson.transcriptLines)
               ? detailJson.transcriptLines.map((line, index: number) => {
                   const lineItem = line as ApiTranscriptLine;
@@ -461,6 +475,7 @@ export default function ListeningScreen() {
             durationSeconds:
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
+            ambientSoundIds: (detailJson.ambient_sound_ids ?? detailJson.ambientSoundIds ?? []).map(String),
             transcriptLines: Array.isArray(detailJson.transcriptLines)
               ? detailJson.transcriptLines.map((line, index: number) => {
                   const lineItem = line as ApiTranscriptLine;
@@ -707,6 +722,17 @@ export default function ListeningScreen() {
   const ambientAudioSrc = selectedAmbientOption?.audioUrl
     ? resolveAudioUrl(selectedAmbientOption.audioUrl)
     : "";
+
+  // If the currently selected ambient sound is not allowed in the loaded lesson, reset it to off
+  useEffect(() => {
+    if (lesson && ambientSound !== "off") {
+      const allowedIds = lesson.ambientSoundIds || [];
+      if (!allowedIds.includes(ambientSound)) {
+        setAmbientSound("off");
+        setTempAmbientSound("off");
+      }
+    }
+  }, [lesson, ambientSound]);
 
   // Synchronize ambient sound with main player state, volume, and selection
   useEffect(() => {

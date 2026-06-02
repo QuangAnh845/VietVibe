@@ -92,6 +92,8 @@ type ListeningLessonResponse = {
   title_ja?: string;
   audio_url?: string;
   duration_seconds?: number;
+  ambient_sound_ids?: string[];
+  ambientSoundIds?: string[];
   transcriptLines?: TranscriptLineResponse[];
 };
 
@@ -198,6 +200,12 @@ export default function AdminContentScreen() {
   const [isContentLoading, setIsContentLoading] = useState(true);
   const [contentError, setContentError] = useState<string | null>(null);
   const [ambientOptions, setAmbientOptions] = useState<AmbientOption[]>([]);
+  const [activeAmbientIds, setActiveAmbientIds] = useState<string[]>([]);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
   const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
   const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState({
@@ -377,6 +385,89 @@ export default function AdminContentScreen() {
     );
   }, [ambientQuery, ambientOptions]);
 
+  const resolveAudioUrl = (audioUrl: string) => {
+    if (!audioUrl) return "";
+    if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    return audioUrl.startsWith("/")
+      ? `${API_BASE_URL}${audioUrl}`
+      : `${API_BASE_URL}/${audioUrl}`;
+  };
+
+  useEffect(() => {
+    const audioUrl = activeLesson?.audio_url;
+    if (!audioUrl) {
+      setIsPlayingAudio(false);
+      setAudioCurrentTime(0);
+      setAudioDuration(0);
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+      return;
+    }
+
+    const resolvedUrl = resolveAudioUrl(audioUrl);
+    const audio = new Audio(resolvedUrl);
+    previewAudioRef.current = audio;
+
+    const handlePlay = () => setIsPlayingAudio(true);
+    const handlePause = () => setIsPlayingAudio(false);
+    const handleTimeUpdate = () => {
+      setAudioCurrentTime(audio.currentTime);
+    };
+    const handleLoadedMetadata = () => {
+      setAudioDuration(audio.duration);
+    };
+    const handleEnded = () => {
+      setIsPlayingAudio(false);
+      setAudioCurrentTime(0);
+    };
+
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.pause();
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("ended", handleEnded);
+      previewAudioRef.current = null;
+    };
+  }, [activeLesson?.audio_url]);
+
+  const togglePlayAudio = () => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+
+    if (isPlayingAudio) {
+      audio.pause();
+    } else {
+      audio.play().catch((err) => {
+        console.error("Failed to play preview audio", err);
+      });
+    }
+  };
+
+  const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const bar = progressBarRef.current;
+    const audio = previewAudioRef.current;
+    if (!bar || !audio || audioDuration <= 0) return;
+
+    const rect = bar.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = percentage * audioDuration;
+
+    audio.currentTime = newTime;
+    setAudioCurrentTime(newTime);
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -426,6 +517,7 @@ export default function AdminContentScreen() {
           setActiveLesson(null);
           setListeningRows([]);
           setVocabRows([]);
+          setActiveAmbientIds([]);
           setDetailError(null);
         }
         return;
@@ -436,6 +528,7 @@ export default function AdminContentScreen() {
           setActiveLesson(null);
           setListeningRows([]);
           setVocabRows([]);
+          setActiveAmbientIds([]);
           setDetailError("Chưa có learning unit cho tình huống này.");
         }
         return;
@@ -471,6 +564,7 @@ export default function AdminContentScreen() {
           let nextListeningRows: ScriptRow[] = [];
           let nextVocabRows: VocabRow[] = [];
           let finalLesson: ListeningLessonResponse | null = null;
+          let loadedAmbientIds: string[] = [];
 
           if (localDraft && localDraft.listening) {
             finalLesson = {
@@ -497,6 +591,8 @@ export default function AdminContentScreen() {
               example: card.example || "",
               pronunciation: card.note || "",
             }));
+
+            loadedAmbientIds = localDraft.listening.ambientSoundIds ?? defaultAmbientIds;
           } else {
             if (backendLesson) {
               finalLesson = backendLesson;
@@ -510,6 +606,10 @@ export default function AdminContentScreen() {
                 timestamp: formatTimestamp(line.start_time ?? 0),
                 endTimeSeconds: line.end_time,
               }));
+
+              loadedAmbientIds = backendLesson.ambient_sound_ids ?? backendLesson.ambientSoundIds ?? defaultAmbientIds;
+            } else {
+              loadedAmbientIds = defaultAmbientIds;
             }
 
             const vocabCards = Array.isArray(backendVocab.data) ? backendVocab.data : [];
@@ -527,6 +627,7 @@ export default function AdminContentScreen() {
           setActiveLesson(finalLesson);
           setListeningRows(nextListeningRows);
           setVocabRows(nextVocabRows);
+          setActiveAmbientIds(loadedAmbientIds.map(String));
           setEditingRow(null);
           setIsAddingRow(false);
 
@@ -620,8 +721,7 @@ export default function AdminContentScreen() {
         audioUrl: lessonAudioUrl,
         durationSeconds: lessonDurationSeconds,
         description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-        ambientSoundIds:
-          currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
+        ambientSoundIds: activeAmbientIds,
         transcriptLines: listeningRows.map((row) => ({
           id: row.index,
           vi: row.vi,
@@ -638,7 +738,7 @@ export default function AdminContentScreen() {
     activeLearningUnitId,
     listeningRows,
     vocabRows,
-    defaultAmbientIds,
+    activeAmbientIds,
     draftWorkflow.setDraft,
   ]);
 
@@ -838,28 +938,9 @@ export default function AdminContentScreen() {
   };
 
   const toggleAmbientSelection = (id: string) => {
-    draftWorkflow.setDraft((currentDraft) => {
-      const currentAmbientIds =
-        currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
-      const nextAmbientIds = currentAmbientIds.includes(id)
-        ? currentAmbientIds.filter((item) => item !== id)
-        : [...currentAmbientIds, id];
-
-      return {
-        ...currentDraft,
-        listening: {
-          ...(currentDraft.listening ?? {
-            titleVi: "",
-            titleJa: "",
-            audioUrl: "",
-            durationSeconds: 0,
-            description: "",
-            transcriptLines: [],
-          }),
-          ambientSoundIds: nextAmbientIds,
-        },
-      };
-    });
+    setActiveAmbientIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
   };
 
   const handleConfirmDelete = () => {
@@ -1503,23 +1584,38 @@ export default function AdminContentScreen() {
                             <div className="flex items-center gap-3">
                               <button
                                 type="button"
+                                onClick={togglePlayAudio}
                                 className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50]"
+                                aria-label={isPlayingAudio ? "Pause" : "Play"}
                               >
-                                <PlayIcon className="h-4 w-4" />
+                                {isPlayingAudio ? (
+                                  <PauseIcon className="h-4 w-4" />
+                                ) : (
+                                  <PlayIcon className="h-4 w-4" />
+                                )}
                               </button>
                               <div className="flex-1">
-                                <div className="h-2 w-full rounded-full bg-[#5f7a71]">
-                                  <div className="h-full w-[65%] rounded-full bg-[#d7f0e5]" />
+                                <div 
+                                  ref={progressBarRef}
+                                  onClick={handleProgressBarClick}
+                                  className="h-4 flex items-center cursor-pointer group"
+                                >
+                                  <div className="h-2 w-full rounded-full bg-[#5f7a71] overflow-hidden">
+                                    <div 
+                                      className="h-full rounded-full bg-[#d7f0e5] transition-all duration-100" 
+                                      style={{ width: `${audioDuration > 0 ? (audioCurrentTime / audioDuration) * 100 : 0}%` }}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                               <div className="text-xs text-[#d7f0e5]">
-                                0:00 / {activeDurationLabel}{" "}
+                                {formatDuration(audioCurrentTime)} / {activeDurationLabel}{" "}
                                 <button
                                   type="button"
                                   onClick={() =>
                                     setListeningModal("replace-audio")
                                   }
-                                  className="underline"
+                                  className="underline ml-2"
                                 >
                                   Thay file
                                 </button>
@@ -3427,6 +3523,20 @@ function SaveIcon({ className }: { className?: string }) {
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
       <path d="M17 21v-8H7v8" />
       <path d="M7 3v5h8" />
+    </svg>
+  );
+}
+
+function PauseIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="6" y="4" width="4" height="16" />
+      <rect x="14" y="4" width="4" height="16" />
     </svg>
   );
 }
