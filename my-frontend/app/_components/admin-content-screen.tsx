@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, ReactNode } from "react";
+import type { ChangeEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { API_BASE_URL, apiCall, apiFetch } from "@/lib/api";
 import {
   getAdminContentDraftFromBrowser,
@@ -242,12 +242,15 @@ export default function AdminContentScreen() {
   const [deleteVocabIndex, setDeleteVocabIndex] = useState<string | null>(null);
   const [vocabToast, setVocabToast] = useState<string | null>(null);
   const [isListeningPlaying, setIsListeningPlaying] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
   const [pendingAudioFile, setPendingAudioFile] = useState<File | null>(null);
   const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
 
   const listeningAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
 
   const activeLocation = useMemo(() => {
     if (!selectedUnit) return null;
@@ -588,7 +591,7 @@ export default function AdminContentScreen() {
 
             return {
               id: placeFull.id,
-              label: placeFull.nameVi || placeFull.nameJa || "Tên mới",
+              label: placeFull.nameJa || placeFull.nameVi || "Tên mới",
               icon: "cart" as IconName,
               status: "draft" as Status,
               units: (placeFull.situations ?? []).map((situation) => {
@@ -598,7 +601,7 @@ export default function AdminContentScreen() {
                 return {
                   id: situation.id,
                   title:
-                    situation.titleVi || situation.titleJa || "Tình huống mới",
+                    situation.titleJa || situation.titleVi || "Tình huống mới",
                   status: "draft" as Status,
                   vocabCount: 0,
                   listeningCount: 0,
@@ -647,11 +650,16 @@ export default function AdminContentScreen() {
     return () => {
       listeningAudioRef.current?.pause();
       listeningAudioRef.current = null;
+      setAudioCurrentTime(0);
+      setAudioDuration(0);
     };
   }, []);
 
   useEffect(() => {
     listeningAudioRef.current?.pause();
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setIsListeningPlaying(false);
   }, [resolvedListeningAudioUrl]);
 
   const startEditRow = (row: (typeof listeningRows)[number]) => {
@@ -843,11 +851,25 @@ export default function AdminContentScreen() {
       audio?.pause();
       audio = new Audio(resolvedListeningAudioUrl);
       audio.preload = "auto";
-      audio.onended = () => setIsListeningPlaying(false);
+      audio.onended = () => {
+        setIsListeningPlaying(false);
+        setAudioCurrentTime(0);
+      };
       audio.onpause = () => setIsListeningPlaying(false);
       audio.onerror = () => {
         setIsListeningPlaying(false);
         setAudioUploadError("Không phát được file audio này.");
+      };
+      audio.ontimeupdate = () => {
+        setAudioCurrentTime(audio!.currentTime);
+      };
+      audio.onloadedmetadata = () => {
+        setAudioDuration(audio!.duration);
+      };
+      audio.ondurationchange = () => {
+        if (Number.isFinite(audio!.duration)) {
+          setAudioDuration(audio!.duration);
+        }
       };
       listeningAudioRef.current = audio;
     }
@@ -865,6 +887,18 @@ export default function AdminContentScreen() {
     }
 
     audio.pause();
+  };
+
+  const handleProgressBarClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const bar = progressBarRef.current;
+    const audio = listeningAudioRef.current;
+    if (!bar || !audio || !Number.isFinite(audio.duration)) return;
+
+    const rect = bar.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+    audio.currentTime = ratio * audio.duration;
+    setAudioCurrentTime(audio.currentTime);
   };
 
   const openAudioFilePicker = () => {
@@ -1613,21 +1647,42 @@ export default function AdminContentScreen() {
                                 type="button"
                                 onClick={toggleListeningPlayback}
                                 disabled={!resolvedListeningAudioUrl}
-                                className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50]"
+                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50] transition-transform hover:scale-105 active:scale-95"
                               >
-                                <PlayIcon
-                                  className={`h-4 w-4 ${
-                                    isListeningPlaying ? "opacity-60" : ""
-                                  }`}
-                                />
+                                {isListeningPlaying ? (
+                                  <PauseIcon className="h-4 w-4" />
+                                ) : (
+                                  <PlayIcon className="h-4 w-4" />
+                                )}
                               </button>
                               <div className="flex-1">
-                                <div className="h-2 w-full rounded-full bg-[#5f7a71]">
-                                  <div className="h-full w-[65%] rounded-full bg-[#d7f0e5]" />
+                                <div
+                                  ref={progressBarRef}
+                                  onClick={handleProgressBarClick}
+                                  className="group relative h-2 w-full cursor-pointer rounded-full bg-[#5f7a71] transition-all hover:h-3"
+                                  role="slider"
+                                  aria-label="Audio progress"
+                                  aria-valuenow={Math.round(audioCurrentTime)}
+                                  aria-valuemin={0}
+                                  aria-valuemax={Math.round(audioDuration || (activeLesson?.duration_seconds ?? 0))}
+                                  tabIndex={0}
+                                >
+                                  <div
+                                    className="h-full rounded-full bg-[#d7f0e5] transition-[width] duration-150 ease-linear"
+                                    style={{
+                                      width: `${(audioDuration || (activeLesson?.duration_seconds ?? 0)) > 0 ? (audioCurrentTime / (audioDuration || (activeLesson?.duration_seconds ?? 1))) * 100 : 0}%`,
+                                    }}
+                                  />
+                                  <div
+                                    className="absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                                    style={{
+                                      left: `calc(${(audioDuration || (activeLesson?.duration_seconds ?? 0)) > 0 ? (audioCurrentTime / (audioDuration || (activeLesson?.duration_seconds ?? 1))) * 100 : 0}% - 7px)`,
+                                    }}
+                                  />
                                 </div>
                               </div>
-                              <div className="text-xs text-[#d7f0e5]">
-                                0:00 / {activeDurationLabel}{" "}
+                              <div className="shrink-0 text-xs text-[#d7f0e5]">
+                                {formatDuration(audioCurrentTime)} / {formatDuration(audioDuration || (activeLesson?.duration_seconds ?? 0))}{" "}
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1793,7 +1848,12 @@ export default function AdminContentScreen() {
                                                   }
                                                   className="h-9 w-16 rounded-xl border border-(--var-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
                                                 />
-                                                <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                                <button 
+                                                  type="button" 
+                                                  onClick={() => setEditDraft(prev => ({ ...prev, timestamp: formatTimestamp(audioCurrentTime) }))}
+                                                >
+                                                  <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                                </button>
                                               </div>
                                             </td>
                                             <td className="px-4 py-3">
@@ -1923,7 +1983,12 @@ export default function AdminContentScreen() {
                                               }
                                               className="h-9 w-16 rounded-xl border border-(--vv-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
                                             />
-                                            <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                            <button 
+                                              type="button" 
+                                              onClick={() => setNewRow(prev => ({ ...prev, timestamp: formatTimestamp(audioCurrentTime) }))}
+                                            >
+                                              <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                            </button>
                                           </div>
                                         </td>
                                         <td className="px-4 py-3">
@@ -3377,6 +3442,20 @@ function PlayIcon({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+function PauseIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+      <rect x="14" y="4" width="4" height="16" rx="1" />
     </svg>
   );
 }

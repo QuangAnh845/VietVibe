@@ -253,6 +253,7 @@ export default function StudyScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
   const [ambientOptions, setAmbientOptions] = useState<
     EnvironmentSoundOption[]
   >(defaultAmbientOptions);
@@ -685,9 +686,10 @@ export default function StudyScreen() {
       .slice(0, index)
       .reduce((total, line) => total + getLineDuration(line), 0);
 
-  const totalAudioDuration = lines.length
+  const baseTotalAudioDuration = lines.length
     ? lines.reduce((total, line) => total + getLineDuration(line), 0)
     : (lesson?.durationSeconds ?? 0);
+  const totalAudioDuration = audioDuration > 0 ? audioDuration : baseTotalAudioDuration;
 
   const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
 
@@ -1348,6 +1350,18 @@ export default function StudyScreen() {
             onEnded={handleAudioEnded}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
+            onLoadedMetadata={(e) => {
+              const audio = e.target as HTMLAudioElement;
+              if (Number.isFinite(audio.duration)) {
+                setAudioDuration(audio.duration);
+              }
+            }}
+            onDurationChange={(e) => {
+              const audio = e.target as HTMLAudioElement;
+              if (Number.isFinite(audio.duration)) {
+                setAudioDuration(audio.duration);
+              }
+            }}
             className="hidden"
           />
         ) : null}
