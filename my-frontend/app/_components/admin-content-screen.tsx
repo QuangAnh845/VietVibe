@@ -661,7 +661,7 @@ export default function AdminContentScreen() {
 
             return {
               id: placeFull.id,
-              label: placeFull.nameVi || placeFull.nameJa || "Tên mới",
+              label: placeFull.nameJa || placeFull.nameVi || "Tên mới",
               icon: "cart" as IconName,
               status: "draft" as Status,
               units: (placeFull.situations ?? []).map((situation) => {
@@ -671,7 +671,7 @@ export default function AdminContentScreen() {
                 return {
                   id: situation.id,
                   title:
-                    situation.titleVi || situation.titleJa || "Tình huống mới",
+                    situation.titleJa || situation.titleVi || "Tình huống mới",
                   status: "draft" as Status,
                   vocabCount: 0,
                   listeningCount: 0,
