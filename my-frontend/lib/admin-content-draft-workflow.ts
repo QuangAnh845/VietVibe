@@ -250,16 +250,25 @@ async function createOrReuseLearningUnit(
     return draft.learningUnitId;
   }
 
-  const existingUnits = await api.get<Array<{ id: string }>>(
-    `/listening/situations/${situationId}/learning-units`,
-    { skipAuth: true },
-  );
-  if (existingUnits.length > 0) {
-    return existingUnits[0].id;
+  if (!draft.levelId) {
+    throw new Error("Can chon level truoc khi xuat ban tinh huong moi.");
   }
 
-  if (!draft.levelId) {
-    throw new Error("Cần chọn level trước khi xuất bản tình huống mới.");
+  const existingUnits = await api.get<
+    Array<{ id: string; levelId?: string; titleVi?: string }>
+  >(`/listening/situations/${situationId}/learning-units`, {
+    skipAuth: true,
+  });
+
+  const normalizedTitle = draft.titleVi.trim().toLowerCase();
+  const matchedUnit = existingUnits.find(
+    (unit) =>
+      unit.levelId === draft.levelId &&
+      (unit.titleVi?.trim().toLowerCase() ?? "") === normalizedTitle,
+  );
+
+  if (matchedUnit?.id) {
+    return matchedUnit.id;
   }
 
   const unit = await api.post<{ id: string }>("/listening/admin/learning-units", {
@@ -424,3 +433,4 @@ export async function publishAdminContentDraft(
     vocabularyCardIds,
   };
 }
+

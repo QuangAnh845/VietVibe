@@ -11,10 +11,6 @@ export function AutoSaveIndicator({
   status,
   className = "",
 }: AutoSaveIndicatorProps) {
-  if (status === "IDLE") {
-    return null;
-  }
-
   if (status === "SAVING") {
     return (
       <span
@@ -28,14 +24,23 @@ export function AutoSaveIndicator({
     );
   }
 
-  if (status === "SAVED") {
+  if (status === "SAVED" || status === "IDLE") {
     return (
       <span
-        className={`inline-flex items-center gap-1 text-[11px] text-[#7b8b83] ${className}`}
+        className={`inline-flex items-center gap-1.5 text-[11px] text-[#7b8b83] ${className}`}
         role="status"
         aria-live="polite"
       >
-        ✓ Đã lưu tự động
+        <svg
+          className="h-3.5 w-3.5 text-[#2f5d50]"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={3}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+        Đã lưu tự động
       </span>
     );
   }

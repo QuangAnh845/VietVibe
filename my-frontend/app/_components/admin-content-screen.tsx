@@ -81,8 +81,22 @@ type ListeningSituationFullResponse = ListeningSituationResponse & {
 
 type LearningUnitResponse = {
   id: string;
+  levelId?: string;
   titleVi?: string;
   titleJa?: string;
+  level?: {
+    id?: string;
+    code?: string;
+    nameVi?: string | null;
+    nameJa?: string | null;
+  } | null;
+};
+
+type LevelResponse = {
+  id: string;
+  code?: string;
+  nameVi?: string | null;
+  nameJa?: string | null;
 };
 
 type ListeningLessonResponse = {
@@ -206,6 +220,15 @@ export default function AdminContentScreen() {
   const [audioDuration, setAudioDuration] = useState(0);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const [levels, setLevels] = useState<LevelResponse[]>([]);
+  const [learningUnitOptions, setLearningUnitOptions] = useState<
+    LearningUnitResponse[]
+  >([]);
+  const [selectedLearningUnitId, setSelectedLearningUnitId] = useState("");
+  const [selectedLevelId, setSelectedLevelId] = useState("");
+  const [learningUnitTitleInput, setLearningUnitTitleInput] = useState("");
+  const [isCreateLearningUnitMode, setIsCreateLearningUnitMode] =
+    useState(false);
   const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
   const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState({
@@ -357,13 +380,39 @@ export default function AdminContentScreen() {
   }, [selectedUnit, activeLocation]);
 
   const activeUnitId = activeUnit?.id ?? null;
-  const activeLearningUnitId = activeUnit?.learningUnitId ?? null;
+  const activeLearningUnitId =
+    selectedLearningUnitId || activeUnit?.learningUnitId || null;
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
   const defaultAmbientIds = useMemo(() => ambientOptions.slice(0, 2).map((item) => item.id), [ambientOptions]);
   const selectedAmbientIds =
     draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
+
+  const getSituationStatus = (unit: Unit): Status => {
+    if (unit.id === activeUnit?.id) {
+      if (draftWorkflow.draft.status === "PUBLISHED") return "published";
+      if (draftWorkflow.draft.publishedAt) return "edited";
+      return "draft";
+    }
+
+    const localDraft = getAdminContentDraftFromBrowser(`admin-content-${unit.id}`);
+    if (localDraft) {
+      if (localDraft.status === "PUBLISHED") return "published";
+      if (localDraft.publishedAt) return "edited";
+      return "draft";
+    }
+
+    return unit.learningUnitId ? "published" : "draft";
+  };
+
+  const getLocationStatus = (location: Location): Status => {
+    if (location.units.length === 0) return "draft";
+    const statuses = location.units.map(getSituationStatus);
+    if (statuses.includes("draft")) return "draft";
+    if (statuses.includes("edited")) return "edited";
+    return "published";
+  };
 
   const filteredLocations = useMemo(() => {
     const normalized = contentQuery.trim().toLowerCase();
@@ -507,6 +556,79 @@ export default function AdminContentScreen() {
       uploadAbortControllerRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadLevels = async () => {
+      try {
+        const response = await apiCall<LevelResponse[]>("/listening/levels");
+        if (isMounted) {
+          setLevels(Array.isArray(response) ? response : []);
+        }
+      } catch (error) {
+        console.error("Failed to load levels", error);
+      }
+    };
+
+    void loadLevels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadLearningUnitsForSituation = async () => {
+      if (!activeUnitId) {
+        if (isMounted) {
+          setLearningUnitOptions([]);
+          setSelectedLearningUnitId("");
+          setIsCreateLearningUnitMode(false);
+          setSelectedLevelId("");
+          setLearningUnitTitleInput("");
+        }
+        return;
+      }
+
+      try {
+        const units = await apiCall<LearningUnitResponse[]>(
+          `/listening/situations/${activeUnitId}/learning-units`,
+        );
+        if (!isMounted) return;
+
+        const normalizedUnits = Array.isArray(units) ? units : [];
+        setLearningUnitOptions(normalizedUnits);
+
+        if (normalizedUnits.length > 0) {
+          const defaultUnit = normalizedUnits[0];
+          setSelectedLearningUnitId(defaultUnit.id);
+          setSelectedLevelId(defaultUnit.levelId || defaultUnit.level?.id || "");
+          setLearningUnitTitleInput(defaultUnit.titleVi || defaultUnit.titleJa || "");
+          setIsCreateLearningUnitMode(false);
+        } else {
+          setSelectedLearningUnitId("");
+          setIsCreateLearningUnitMode(true);
+          setSelectedLevelId((current) => current || levels[0]?.id || "");
+          setLearningUnitTitleInput(activeUnit?.title || "");
+        }
+      } catch (error) {
+        console.error("Failed to load learning units for situation", error);
+        if (!isMounted) return;
+        setLearningUnitOptions([]);
+        setSelectedLearningUnitId("");
+        setIsCreateLearningUnitMode(true);
+      }
+    };
+
+    void loadLearningUnitsForSituation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeUnitId, activeUnit?.title, levels]);
 
   useEffect(() => {
     let isMounted = true;
@@ -685,57 +807,69 @@ export default function AdminContentScreen() {
     const lessonAudioUrl = activeLesson?.audio_url || "";
     const lessonDurationSeconds = activeLesson?.duration_seconds ?? 0;
 
-    draftWorkflow.setDraft((currentDraft) => ({
-      ...currentDraft,
-      contentId: `admin-content-${activeUnit.id}`,
-      status:
-        currentDraft.status === "PUBLISHED"
+    draftWorkflow.setDraft((currentDraft) => {
+      const nextDraft = {
+        ...currentDraft,
+        contentId: `admin-content-${activeUnit.id}`,
+        status: (currentDraft.status === "PUBLISHED"
           ? "PUBLISHED"
           : currentDraft.publishedAt
             ? "DRAFT"
             : activeUnit.status === "published"
               ? "PUBLISHED"
-              : "DRAFT",
-      placeId: activeLocation.id,
-      placeNameVi: activeLocation.label,
-      placeNameJa: activeLocation.label,
-      situationId: activeUnit.id,
-      situationTitleVi: activeUnit.title,
-      situationTitleJa: activeUnit.title,
-      learningUnitId: activeLearningUnitId ?? undefined,
-      titleVi: lessonTitleVi,
-      titleJa: lessonTitleJa,
-      description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
-      vocabCards: vocabRows.map((row) => ({
-        id: row.id,
-        term: row.term,
-        type: row.type,
-        meaning: row.meaning,
-        example: row.example,
-        note: row.pronunciation,
-      })),
-      listening: {
-        lessonId: activeLessonId ?? undefined,
-        titleVi: lessonTitleVi,
-        titleJa: lessonTitleJa,
-        audioUrl: lessonAudioUrl,
-        durationSeconds: lessonDurationSeconds,
-        description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-        ambientSoundIds: activeAmbientIds,
-        transcriptLines: listeningRows.map((row) => ({
-          id: row.index,
-          vi: row.vi,
-          jp: row.jp,
-          timestamp: row.timestamp,
+              : "DRAFT") as "DRAFT" | "PUBLISHED",
+        placeId: activeLocation.id,
+        placeNameVi: activeLocation.label,
+        placeNameJa: activeLocation.label,
+        situationId: activeUnit.id,
+        situationTitleVi: activeUnit.title,
+        situationTitleJa: activeUnit.title,
+        learningUnitId: activeLearningUnitId ?? undefined,
+        levelId:
+          selectedLevelId ||
+          learningUnitOptions.find((unit) => unit.id === activeLearningUnitId)
+            ?.levelId,
+        titleVi: learningUnitTitleInput || lessonTitleVi,
+        titleJa: learningUnitTitleInput || lessonTitleJa,
+        description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
+        vocabCards: vocabRows.map((row) => ({
+          id: row.id,
+          term: row.term,
+          type: row.type,
+          meaning: row.meaning,
+          example: row.example,
+          note: row.pronunciation,
         })),
-      },
-    }));
+        listening: {
+          lessonId: activeLessonId ?? undefined,
+          titleVi: lessonTitleVi,
+          titleJa: lessonTitleJa,
+          audioUrl: lessonAudioUrl,
+          durationSeconds: lessonDurationSeconds,
+          description: `Bài nghe cho tình huống ${activeUnit.title}.`,
+          ambientSoundIds: activeAmbientIds,
+          transcriptLines: listeningRows.map((row) => ({
+            id: row.index,
+            vi: row.vi,
+            jp: row.jp,
+            timestamp: row.timestamp,
+          })),
+        },
+      };
+
+      return JSON.stringify(nextDraft) === JSON.stringify(currentDraft)
+        ? currentDraft
+        : nextDraft;
+    });
   }, [
     activeLocation,
     activeUnit,
     activeLesson,
     activeLessonId,
     activeLearningUnitId,
+    selectedLevelId,
+    learningUnitTitleInput,
+    learningUnitOptions,
     listeningRows,
     vocabRows,
     activeAmbientIds,
@@ -878,8 +1012,20 @@ export default function AdminContentScreen() {
     situationTitleVi: activeUnit?.title ?? draftWorkflow.draft.situationTitleVi,
     situationTitleJa: activeUnit?.title ?? draftWorkflow.draft.situationTitleJa,
     learningUnitId: activeLearningUnitId ?? draftWorkflow.draft.learningUnitId,
-    titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.titleVi,
-    titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.titleJa,
+    levelId:
+      selectedLevelId ||
+      learningUnitOptions.find((unit) => unit.id === activeLearningUnitId)?.levelId ||
+      draftWorkflow.draft.levelId,
+    titleVi:
+      learningUnitTitleInput ||
+      activeLesson?.title_vi ||
+      activeUnit?.title ||
+      draftWorkflow.draft.titleVi,
+    titleJa:
+      learningUnitTitleInput ||
+      activeLesson?.title_ja ||
+      activeUnit?.title ||
+      draftWorkflow.draft.titleJa,
     description:
       draftWorkflow.draft.description ||
       `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit?.title ?? ""}.`,
@@ -961,19 +1107,24 @@ export default function AdminContentScreen() {
       return;
     }
 
+    if (!selectedLearningUnitId && !selectedLevelId) {
+      setSaveStatus("error");
+      setLocationToast("Can chon level truoc khi tao LearningUnit moi.");
+      window.setTimeout(() => setLocationToast(null), 3000);
+      return;
+    }
+
+    if (!selectedLearningUnitId && !learningUnitTitleInput.trim()) {
+      setSaveStatus("error");
+      setLocationToast("Can nhap ten bai hoc truoc khi publish.");
+      window.setTimeout(() => setLocationToast(null), 3000);
+      return;
+    }
+
     setSaveStatus("saving");
 
     try {
       const publishResult = await draftWorkflow.publish(buildCurrentDraftSnapshot());
-      const vocabularyCardIds = publishResult.vocabularyCardIds;
-      if (vocabularyCardIds.length > 0) {
-        setVocabRows((currentRows) =>
-          currentRows.map((row, index) => ({
-            ...row,
-            id: vocabularyCardIds[index] ?? row.id,
-          })),
-        );
-      }
       setLocationsState((prev) =>
         prev.map((location) =>
           location.id === activeLocation.id
@@ -986,6 +1137,7 @@ export default function AdminContentScreen() {
                         status: "published",
                         vocabCount: vocabRows.length,
                         listeningCount: listeningRows.length,
+                        learningUnitId: publishResult.learningUnitId,
                       }
                     : unit,
                 ),
@@ -993,6 +1145,8 @@ export default function AdminContentScreen() {
             : location,
         ),
       );
+      setSelectedLearningUnitId(publishResult.learningUnitId);
+      setIsCreateLearningUnitMode(false);
       setSaveStatus("saved");
       setLocationToast(
         "Đã xuất bản nội dung. Learner có thể xem nội dung mới.",
@@ -1008,56 +1162,166 @@ export default function AdminContentScreen() {
     window.setTimeout(() => setLocationToast(null), 3000);
   };
 
-  const handleSaveVocab = () => {
-    if (!activeLearningUnitId) {
-      setVocabToast("Chưa có learning unit cho tình huống này.");
-      window.setTimeout(() => setVocabToast(null), 2400);
-      return;
-    }
+  const handleSaveVocab = async () => {
+    const isDraftOnly = !activeLearningUnitId;
 
-    if (vocabModal === "add") {
-      const nextRows = normalizeVocabRows([
-        ...vocabRows,
-        {
-          index: String(vocabRows.length + 1),
-          term: vocabForm.term,
-          type: vocabForm.type,
-          meaning: vocabForm.meaning,
-          example: vocabForm.example,
-          pronunciation: vocabForm.pronunciation,
-        },
-      ]);
+    setSaveStatus("saving");
 
-      applyLocalVocabRows(nextRows);
+    try {
+      if (vocabModal === "add") {
+        if (isDraftOnly) {
+          const nextRows = normalizeVocabRows([
+            ...vocabRows,
+            {
+              id: undefined,
+              index: String(vocabRows.length + 1),
+              term: vocabForm.term,
+              type: vocabForm.type,
+              meaning: vocabForm.meaning,
+              example: vocabForm.example,
+              pronunciation: vocabForm.pronunciation,
+            },
+          ]);
+
+          setVocabRows(nextRows);
+          setLocationsState((prev) =>
+            prev.map((location) => ({
+              ...location,
+              units: location.units.map((unit) =>
+                unit.id === activeUnitId
+                  ? { ...unit, vocabCount: nextRows.length }
+                  : unit,
+              ),
+            })),
+          );
+
+          setSaveStatus("saved");
+          setVocabModal(null);
+          setVocabToast("Da luu nhap local. Bam Xuat ban de dong bo len he thong.");
+          window.setTimeout(() => setVocabToast(null), 2400);
+          return;
+        }
+
+        const payload = {
+          learning_unit_id: activeLearningUnitId,
+          word_vi: vocabForm.term,
+          meaning_ja: vocabForm.meaning,
+          example_vi: vocabForm.example || undefined,
+          note: vocabForm.pronunciation || undefined,
+          tag: vocabForm.type || undefined,
+        };
+
+        const created = await apiCall<{ data?: VocabCardResponse }>(
+          "/vocabulary/admin/create",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+        );
+
+        const createdCard = created.data ?? (created as VocabCardResponse);
+        const nextRows = normalizeVocabRows([
+          ...vocabRows,
+          {
+            id: createdCard.id,
+            index: String(vocabRows.length + 1),
+            term: createdCard.wordVi ?? vocabForm.term,
+            type: createdCard.tag ?? vocabForm.type,
+            meaning: createdCard.meaningJa ?? vocabForm.meaning,
+            example: createdCard.exampleVi ?? vocabForm.example,
+            pronunciation: createdCard.note ?? vocabForm.pronunciation,
+          },
+        ]);
+
+        setVocabRows(nextRows);
+        setLocationsState((prev) =>
+          prev.map((location) => ({
+            ...location,
+            units: location.units.map((unit) =>
+              unit.id === activeUnitId ? { ...unit, vocabCount: nextRows.length } : unit,
+            ),
+          })),
+        );
+
+        setSaveStatus("saved");
+        setVocabModal(null);
+        setVocabToast("Da them the tu vung.");
+      } else if (vocabModal === "edit" && vocabToEditIndex) {
+        const existingRow = vocabRows.find((row) => row.index === vocabToEditIndex);
+
+        if (!isDraftOnly && existingRow?.id) {
+          const payload = {
+            learning_unit_id: activeLearningUnitId,
+            word_vi: vocabForm.term,
+            meaning_ja: vocabForm.meaning,
+            example_vi: vocabForm.example || undefined,
+            note: vocabForm.pronunciation || undefined,
+            tag: vocabForm.type || undefined,
+          };
+
+          const updated = await apiCall<{ data?: VocabCardResponse }>(
+            `/vocabulary/admin/${existingRow.id}`,
+            {
+              method: "PUT",
+              body: JSON.stringify(payload),
+            },
+          );
+
+          const updatedCard = updated.data ?? (updated as VocabCardResponse);
+          const nextRows = normalizeVocabRows(
+            vocabRows.map((row) =>
+              row.index === vocabToEditIndex
+                ? {
+                    ...row,
+                    term: updatedCard.wordVi ?? vocabForm.term,
+                    type: updatedCard.tag ?? vocabForm.type,
+                    meaning: updatedCard.meaningJa ?? vocabForm.meaning,
+                    example: updatedCard.exampleVi ?? vocabForm.example,
+                    pronunciation: updatedCard.note ?? vocabForm.pronunciation,
+                  }
+                : row,
+            ),
+          );
+
+          setVocabRows(nextRows);
+        } else {
+          const nextRows = normalizeVocabRows(
+            vocabRows.map((row) =>
+              row.index === vocabToEditIndex
+                ? {
+                    ...row,
+                    term: vocabForm.term,
+                    type: vocabForm.type,
+                    meaning: vocabForm.meaning,
+                    example: vocabForm.example,
+                    pronunciation: vocabForm.pronunciation,
+                  }
+                : row,
+            ),
+          );
+
+          setVocabRows(nextRows);
+        }
+
       setSaveStatus("saved");
-      setVocabModal(null);
-      setVocabToast("Đã lưu nháp thẻ từ vựng.");
-    } else if (vocabModal === "edit" && vocabToEditIndex) {
-      const nextRows = normalizeVocabRows(
-        vocabRows.map((row) =>
-          row.index === vocabToEditIndex
-            ? {
-                ...row,
-                term: vocabForm.term,
-                type: vocabForm.type,
-                meaning: vocabForm.meaning,
-                example: vocabForm.example,
-                pronunciation: vocabForm.pronunciation,
-              }
-            : row,
-        ),
+        setVocabModal(null);
+        setVocabToEditIndex(null);
+        setVocabToast(
+          isDraftOnly
+            ? "Da luu nhap local. Bam Xuat ban de dong bo len he thong."
+            : "Da cap nhat the tu vung.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to save vocab", error);
+      setSaveStatus("error");
+      setVocabToast(
+        error instanceof Error ? error.message : "Khong the luu the tu vung.",
       );
-
-      applyLocalVocabRows(nextRows);
-      setSaveStatus("saved");
-      setVocabModal(null);
-      setVocabToEditIndex(null);
-      setVocabToast("Đã lưu nháp thẻ từ vựng.");
     }
 
     window.setTimeout(() => setVocabToast(null), 2400);
   };
-
   const handleDeleteVocab = async () => {
     if (!deleteVocabIndex) {
       return;
@@ -1189,42 +1453,32 @@ export default function AdminContentScreen() {
                                     />
                                     {location.label}
                                   </button>
-                                  <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
-                                    <IconButton
-                                      ariaLabel="Edit"
-                                      onClick={() => {
-                                        setIsEditLocationOpen(true);
-                                        setLocationForm({
-                                          id: location.id,
-                                          label: location.label,
-                                          icon: location.icon,
-                                        });
-                                      }}
-                                    >
-                                      <EditIcon className="h-4 w-4" />
-                                    </IconButton>
-                                    <IconButton
-                                      ariaLabel="Delete"
-                                      onClick={() =>
-                                        setDeleteLocationIdState(location.id)
-                                      }
-                                    >
-                                      <TrashIcon className="h-4 w-4" />
-                                    </IconButton>
+                                  <div className="flex items-center gap-2">
+                                    <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                                      <IconButton
+                                        ariaLabel="Edit"
+                                        onClick={() => {
+                                          setIsEditLocationOpen(true);
+                                          setLocationForm({
+                                            id: location.id,
+                                            label: location.label,
+                                            icon: location.icon,
+                                          });
+                                        }}
+                                      >
+                                        <EditIcon className="h-4 w-4" />
+                                      </IconButton>
+                                      <IconButton
+                                        ariaLabel="Delete"
+                                        onClick={() =>
+                                          setDeleteLocationIdState(location.id)
+                                        }
+                                      >
+                                        <TrashIcon className="h-4 w-4" />
+                                      </IconButton>
+                                    </div>
                                     <StatusDot
-                                      status={
-                                        location.units.some(
-                                          (unit) => unit.id === activeUnit?.id,
-                                        ) && draftWorkflow.draft.status ===
-                                          "PUBLISHED"
-                                          ? "published"
-                                          : location.units.some(
-                                                (unit) =>
-                                                  unit.id === activeUnit?.id,
-                                              ) && draftWorkflow.draft.publishedAt
-                                            ? "draft"
-                                            : location.status
-                                      }
+                                      status={getLocationStatus(location)}
                                     />
                                   </div>
                                 </div>
@@ -1264,59 +1518,10 @@ export default function AdminContentScreen() {
                                           }`}
                                         >
                                           <span>{unit.title}</span>
-                                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <IconButton
-                                              ariaLabel="Edit"
-                                              onClick={() => {
-                                                setIsEditSituationOpen(true);
-                                                setCurrentLocationId(location.id);
-                                                setSituationForm({
-                                                  id: unit.id,
-                                                  title: unit.title,
-                                                });
-                                              }}
-                                            >
-                                              <EditIcon className="h-4 w-4" />
-                                            </IconButton>
-
-                                            <IconButton
-                                              ariaLabel="Duplicate"
-                                              onClick={() => {
-                                                const newUnit = {
-                                                  id: `unit-${Date.now()}`,
-                                                  title: `${unit.title} (Copy)`,
-                                                  status: "draft" as Status,
-                                                  vocabCount: unit.vocabCount ?? 0,
-                                                  listeningCount: unit.listeningCount ?? 0,
-                                                  duration: unit.duration ?? "0:00",
-                                                };
-                                                setLocationsState((prev) =>
-                                                  prev.map((l) =>
-                                                    l.id === location.id
-                                                      ? { ...l, units: [...l.units, newUnit] }
-                                                      : l,
-                                                  ),
-                                                );
-                                                setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
-                                                window.setTimeout(() => setLocationToast(null), 2000);
-                                              }}
-                                            >
-                                              <PlusIcon className="h-4 w-4" />
-                                            </IconButton>
-
-                                            <div>
-                                              <StatusDot
-                                                status={
-                                                  unit.id === activeUnit?.id
-                                                    ? draftWorkflow.draft.status ===
-                                                      "PUBLISHED"
-                                                      ? "published"
-                                                      : draftWorkflow.draft.publishedAt
-                                                        ? "draft"
-                                                        : "draft"
-                                                    : unit.status
-                                                }
-                                                ariaLabel="Edit situation"
+                                          <div className="flex items-center gap-2">
+                                            <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                                              <IconButton
+                                                ariaLabel="Edit"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
                                                   setIsEditSituationOpen(true);
@@ -1326,8 +1531,50 @@ export default function AdminContentScreen() {
                                                     title: unit.title,
                                                   });
                                                 }}
-                                              />
+                                              >
+                                                <EditIcon className="h-4 w-4" />
+                                              </IconButton>
+
+                                              <IconButton
+                                                ariaLabel="Duplicate"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  const newUnit = {
+                                                    id: `unit-${Date.now()}`,
+                                                    title: `${unit.title} (Copy)`,
+                                                    status: "draft" as Status,
+                                                    vocabCount: unit.vocabCount ?? 0,
+                                                    listeningCount: unit.listeningCount ?? 0,
+                                                    duration: unit.duration ?? "0:00",
+                                                  };
+                                                  setLocationsState((prev) =>
+                                                    prev.map((l) =>
+                                                      l.id === location.id
+                                                        ? { ...l, units: [...l.units, newUnit] }
+                                                        : l,
+                                                    ),
+                                                  );
+                                                  setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
+                                                  window.setTimeout(() => setLocationToast(null), 2000);
+                                                }}
+                                              >
+                                                <PlusIcon className="h-4 w-4" />
+                                              </IconButton>
                                             </div>
+
+                                            <StatusDot
+                                              status={getSituationStatus(unit)}
+                                              ariaLabel="Edit situation"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                setIsEditSituationOpen(true);
+                                                setCurrentLocationId(location.id);
+                                                setSituationForm({
+                                                  id: unit.id,
+                                                  title: unit.title,
+                                                });
+                                              }}
+                                            />
                                           </div>
                                         </button>
                                       ))}
@@ -1381,9 +1628,7 @@ export default function AdminContentScreen() {
                               {activeUnit.title}
                             </h2>
                             <p className="mt-1 text-[11px] text-[#9aa8a2]">
-                              {vocabRows.length} thẻ từ vựng •{" "}
-                              {listeningRows.length} câu hội thoại •{" "}
-                              {activeDurationLabel}
+                              {vocabRows.length} thẻ từ vựng · {listeningRows.length} câu hội thoại · {activeDurationLabel}
                             </p>
                           </div>
                         </div>
@@ -1392,15 +1637,11 @@ export default function AdminContentScreen() {
                             status={draftWorkflow.autoSaveStatus}
                           />
                           {draftWorkflow.draft.status === "PUBLISHED" ? (
-                            <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
+                            <span className="rounded-full bg-[#e2e8e5] px-4 py-2 text-[11px] font-semibold text-[#4f5d57]">
                               Đã xuất bản
                             </span>
-                          ) : draftWorkflow.draft.publishedAt ? (
-                            <span className="rounded-full border border-[#f4b24f] bg-[#fdf6e3] px-3 py-2 text-[11px] font-semibold text-[#b4771e]">
-                              Nháp
-                            </span>
                           ) : (
-                            <span className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#b4771e] border border-[#f4b24f] bg-[#fdf6e3]">
+                            <span className="rounded-full bg-[#fdf6e3] border border-[#f4b24f]/30 px-4 py-2 text-[11px] font-semibold text-[#b4771e]">
                               Nháp
                             </span>
                           )}
@@ -1409,8 +1650,8 @@ export default function AdminContentScreen() {
                             type="button"
                             onClick={handlePublishActiveUnit}
                             disabled={draftWorkflow.isPublishing}
-                            className={`rounded-full px-4 py-2 text-[11px] font-semibold flex items-center gap-2 
-                                bg-[#2f5d50] text-white disabled:opacity-60
+                            className={`rounded-full px-4 py-2 text-[11px] font-semibold flex items-center gap-1.5 
+                                bg-[#2f5d50] hover:bg-[#23483e] transition-colors text-white disabled:opacity-60
                             `}
                           >
                             <EyeIcon className="h-4 w-4" />
@@ -1461,7 +1702,7 @@ export default function AdminContentScreen() {
                               <button
                                 type="button"
                                 onClick={() => setIsVocabImportOpen(true)}
-                                className="rounded-full border border-[#dfe6df] px-3 py-1 text-[11px] font-semibold text-[#7b8b83]"
+                                className="rounded-full bg-[#e2e8e5] px-4 py-1.5 text-[11px] font-bold text-[#4f5e58] hover:bg-[#d5deda] transition-colors"
                               >
                                 Import CSV
                               </button>
@@ -1478,7 +1719,7 @@ export default function AdminContentScreen() {
                                     meaning: "",
                                   });
                                 }}
-                                className="rounded-full bg-[#2f5d50] px-3 py-1 text-[11px] font-semibold text-white"
+                                className="rounded-full bg-[#2f5d50] px-4 py-1.5 text-[11px] font-bold text-white hover:bg-[#23483e] transition-colors"
                               >
                                 + Thêm thẻ
                               </button>
@@ -1498,16 +1739,16 @@ export default function AdminContentScreen() {
                           ) : (
                             <div className="mt-3 overflow-hidden rounded-2xl border border-[#eef2ee]">
                               <table className="w-full text-left text-[11px]">
-                                <thead className="bg-[#f8faf7] text-[#7b8b83]">
+                                <thead className="bg-[#f8faf7] text-[#7b8b83] font-semibold uppercase tracking-wider">
                                   <tr>
                                     <th className="px-4 py-3">#</th>
-                                    <th className="px-4 py-3">Từ / cụm từ</th>
-                                    <th className="px-4 py-3">Loại</th>
+                                    <th className="px-4 py-3">TỪ / CỤM TỪ</th>
+                                    <th className="px-4 py-3">LOẠI</th>
                                     <th className="px-4 py-3">
-                                      Nghĩa tiếng Nhật
+                                      NGHĨA TIẾNG NHẬT
                                     </th>
                                     <th className="px-4 py-3">
-                                      Ví dụ câu (Việt)
+                                      VÍ DỤ CÂU (VIỆT)
                                     </th>
                                     <th className="px-4 py-3"></th>
                                   </tr>
@@ -1519,7 +1760,7 @@ export default function AdminContentScreen() {
                                       className="border-t border-[#eef2ee]"
                                     >
                                       <td className="px-4 py-3">{row.index}</td>
-                                      <td className="px-4 py-3 font-semibold">
+                                      <td className="px-4 py-3 font-semibold text-[#1f2b27]">
                                         {row.term}
                                       </td>
                                       <td className="px-4 py-3">
@@ -1530,13 +1771,14 @@ export default function AdminContentScreen() {
                                       <td className="px-4 py-3">
                                         {row.meaning}
                                       </td>
-                                      <td className="px-4 py-3">
-                                        {row.example}
+                                      <td className="px-4 py-3 text-[#5c6962] italic font-normal">
+                                        {row.example ? `"${row.example.replace(/^"|"$/g, "")}"` : ""}
                                       </td>
                                       <td className="px-4 py-3">
-                                        <div className="flex items-center gap-2">
-                                          <IconButton
-                                            ariaLabel="Edit"
+                                        <div className="flex items-center gap-4">
+                                          <button
+                                            type="button"
+                                            aria-label="Sửa"
                                             onClick={() => {
                                               setVocabModal("edit");
                                               setVocabToEditIndex(row.index);
@@ -1550,17 +1792,20 @@ export default function AdminContentScreen() {
                                                 meaning: row.meaning,
                                               });
                                             }}
+                                            className="text-[#9aa8a2] hover:text-[#2f5d50] transition-colors"
                                           >
                                             <EditIcon className="h-4 w-4" />
-                                          </IconButton>
-                                          <IconButton
-                                            ariaLabel="Delete"
+                                          </button>
+                                          <button
+                                            type="button"
+                                            aria-label="Xóa"
                                             onClick={() =>
                                               setDeleteVocabIndex(row.index)
                                             }
+                                            className="text-[#d46b6b] hover:text-[#a63d3d] transition-colors"
                                           >
-                                            <TrashIcon className="h-4 w-4 text-[#d46b6b]" />
-                                          </IconButton>
+                                            <TrashIcon className="h-4 w-4" />
+                                          </button>
                                         </div>
                                       </td>
                                     </tr>
@@ -1570,11 +1815,20 @@ export default function AdminContentScreen() {
                             </div>
                           )}
 
-                          <div className="mt-3 flex items-center gap-2 text-[11px] text-[#7b8b83]">
-                            <InfoIcon className="h-4 w-4" />
+                          <div className="mt-4 flex items-center gap-2 text-[11px] text-[#7b8b83]">
+                            <svg
+                              className="h-4 w-4 text-[#2f5d50] shrink-0"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth={2}
+                            >
+                              <circle cx="12" cy="12" r="10" />
+                              <line x1="12" y1="16" x2="12" y2="12" />
+                              <line x1="12" y1="8" x2="12.01" y2="8" />
+                            </svg>
                             <span>
-                              Bấm vào để sửa thẻ — gồm cả nghĩa tiếng Nhật, ví
-                              dụ câu tiếng Việt và ghi chú (mặt sau flashcard)
+                              Bấm ✎ để sửa thẻ — gồm cả nghĩa tiếng Nhật, ví dụ câu tiếng Nhật và ghi chú (mặt sau flashcard)
                             </span>
                           </div>
                         </div>
@@ -2810,7 +3064,17 @@ export default function AdminContentScreen() {
                         ),
                       );
                       setSaveStatus("error");
-                      setLocationToast("Không thể thêm tình huống.");
+                      const statusCode =
+                        typeof error === "object" &&
+                        error !== null &&
+                        "statusCode" in error
+                          ? Number((error as { statusCode?: unknown }).statusCode)
+                          : undefined;
+                      setLocationToast(
+                        statusCode === 403
+                          ? "Bạn không có quyền admin. Vui lòng đăng nhập bằng tài khoản admin."
+                          : "Không thể thêm tình huống.",
+                      );
                     }
 
                     setIsAddSituationOpen(false);
@@ -3032,7 +3296,7 @@ function StatusDot({
   ariaLabel,
 }: {
   status: Status;
-  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onClick?: (event: React.MouseEvent<HTMLSpanElement>) => void;
   ariaLabel?: string;
 }) {
   const colors = {
@@ -3043,10 +3307,17 @@ function StatusDot({
 
   if (onClick) {
     return (
-      <button
-        type="button"
+      <span
+        role="button"
+        tabIndex={0}
         aria-label={ariaLabel || "Edit"}
         onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick(event as unknown as React.MouseEvent<HTMLSpanElement>);
+          }
+        }}
         className={`h-2.5 w-2.5 rounded-full ${colors[status]}`}
       />
     );
@@ -3064,13 +3335,13 @@ function LegendDot({ color }: { color: string }) {
 function getTagClass(type: string) {
   switch (type) {
     case "từ lóng":
-      return "rounded-full bg-(--vv-red) px-2 py-1 text-[10px]  text-white";
+      return "rounded-full bg-[#9f3d3a] px-2.5 py-0.5 text-[10px] text-white font-semibold";
     case "thành ngữ":
-      return "rounded-full bg-(--vv-accent-strong) px-2 py-1 text-[10px] text-white";
+      return "rounded-full bg-[#2f5d50] px-2.5 py-0.5 text-[10px] text-white font-semibold";
     case "từ chuyên ngành":
-      return "rounded-full bg-[#dff2ea] px-2 py-1 text-[10px]  text-black ";
+      return "rounded-full bg-[#d2ede2] px-2.5 py-0.5 text-[10px] text-[#2f5d50] font-semibold";
     default:
-      return "rounded-full bg-[#eef2ee] px-2 py-1 text-[10px]  ";
+      return "rounded-full bg-[#eef2ee] px-2.5 py-0.5 text-[10px] font-semibold";
   }
 }
 
@@ -3546,6 +3817,24 @@ function SaveIcon({ className }: { className?: string }) {
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
       <path d="M17 21v-8H7v8" />
       <path d="M7 3v5h8" />
+    </svg>
+  );
+}
+
+function GearIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
