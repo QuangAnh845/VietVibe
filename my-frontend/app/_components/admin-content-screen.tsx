@@ -1203,8 +1203,8 @@ export default function AdminContentScreen() {
                               : location.units;
 
                             return (
-                              <div key={location.id} className="group bg-white">
-                                <div className="flex items-center justify-between px-3 py-2">
+                              <div key={location.id} className="bg-white">
+                                <div className="group flex items-center justify-between px-3 py-2">
                                   <button
                                     type="button"
                                     onClick={() =>
