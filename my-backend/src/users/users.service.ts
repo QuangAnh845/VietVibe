@@ -14,7 +14,7 @@ import { UpdatePasswordDto } from './dto/update-password.dto.js';
 import { UpdateLearningUnitProgressDto } from './dto/update-learning-unit-progress.dto.js';
 
 const models = require(path.resolve(__dirname, '../../src/models'));
-const { LearningUnit, UserProgress } = models;
+const { LearningUnit, UserProgress, VocabularyCard } = models;
 
 @Injectable()
 export class UsersService {
@@ -217,7 +217,154 @@ export class UsersService {
       { upsert: true },
     );
 
-    return this.getOverallProgress(userId);
+    // After updating, return a per-unit summary (vocab list + viewed status, listening progress)
+    const userObjectId = this.toObjectId(userId);
+    const learningUnitObjectId = this.toObjectId(learningUnitId);
+
+    const progress = await UserProgress.findOne({
+      user_id: userObjectId,
+      learning_unit_id: learningUnitObjectId,
+    }).exec();
+
+    // Fetch vocabulary cards for this unit and mark viewed status
+    const vocabularyCards = await VocabularyCard.find({
+      learning_unit_id: learningUnitObjectId,
+    })
+      .select('word_vi meaning_ja')
+      .sort({ created_at: 1 })
+      .exec();
+
+    const viewedIds = new Set(
+      (progress?.vocabulary_progress?.viewed_card_ids || []).map(String),
+    );
+
+    const cards = vocabularyCards.map((c: any) => ({
+      id: String(c._id),
+      word_vi: c.word_vi,
+      meaning_ja: c.meaning_ja,
+      viewed: viewedIds.has(String(c._id)),
+    }));
+
+    const vocabTotal = vocabularyCards.length;
+    const viewedCount = cards.filter((c) => c.viewed).length;
+    const vocabCompleted = Boolean(progress?.vocabulary_progress?.completed);
+    const vocabCompletedAt = progress?.vocabulary_progress?.completed_at ?? null;
+
+    const listening = progress?.listening_progress || {};
+
+    return {
+      success: true,
+      data: {
+        learningUnitId,
+        vocabulary: {
+          totalCards: vocabTotal,
+          viewedCardIds: progress?.vocabulary_progress?.viewed_card_ids || [],
+          viewedCardCount: viewedCount,
+          completed: vocabCompleted,
+          completedAt: vocabCompletedAt,
+          cards,
+        },
+        listening: {
+          lessonId: listening?.lesson_id ?? null,
+          lastPositionSeconds: listening?.last_position_seconds ?? 0,
+          completed: Boolean(listening?.completed),
+          completedAt: listening?.completed_at ?? null,
+        },
+      },
+    };
+  }
+
+  async markVocabularyCardViewed(
+    userId: string,
+    learningUnitId: string,
+    cardId: string,
+  ) {
+    await this.ensureUserExists(userId);
+
+    const learningUnitObjectId = this.toObjectId(learningUnitId);
+    const cardObjectId = this.toObjectId(cardId);
+    const [learningUnit, vocabularyCard, totalCards] = await Promise.all([
+      LearningUnit.findById(learningUnitObjectId).select('_id').exec(),
+      VocabularyCard.findOne({
+        _id: cardObjectId,
+        learning_unit_id: learningUnitObjectId,
+      })
+        .select('_id learning_unit_id')
+        .exec(),
+      VocabularyCard.countDocuments({ learning_unit_id: learningUnitObjectId }),
+    ]);
+
+    if (!learningUnit) {
+      throw new NotFoundException('Learning unit not found');
+    }
+
+    if (!vocabularyCard) {
+      throw new NotFoundException(
+        'Vocabulary card not found for this learning unit',
+      );
+    }
+
+    const userObjectId = this.toObjectId(userId);
+
+    // Atomically add cardId to viewed_card_ids (prevents duplicates)
+    const updated = await UserProgress.findOneAndUpdate(
+      {
+        user_id: userObjectId,
+        learning_unit_id: learningUnitObjectId,
+      },
+      {
+        $setOnInsert: { user_id: userObjectId, learning_unit_id: learningUnitObjectId },
+        $addToSet: { 'vocabulary_progress.viewed_card_ids': cardObjectId },
+      },
+      { new: true, upsert: true },
+    ).exec();
+
+    if (!updated) {
+      throw new NotFoundException('User progress could not be updated');
+    }
+
+    const viewedCardIds = updated.vocabulary_progress?.viewed_card_ids || [];
+
+    // If the user has now viewed all cards, set completed and completed_at atomically
+    if (viewedCardIds.length === totalCards) {
+      await UserProgress.updateOne(
+        {
+          user_id: userObjectId,
+          learning_unit_id: learningUnitObjectId,
+          'vocabulary_progress.completed': { $ne: true },
+        },
+        {
+          $set: {
+            'vocabulary_progress.completed': true,
+            'vocabulary_progress.completed_at': new Date(),
+          },
+        },
+      ).exec();
+    }
+
+    const finalProgress = await UserProgress.findOne({
+      user_id: userObjectId,
+      learning_unit_id: learningUnitObjectId,
+    }).exec();
+
+    const completed = Boolean(finalProgress?.vocabulary_progress?.completed);
+
+    return {
+      success: true,
+      message: completed
+        ? 'Vocabulary progress completed successfully'
+        : 'Vocabulary progress updated successfully',
+      data: {
+        userId,
+        learningUnitId,
+        cardId,
+        viewedCardIds: finalProgress?.vocabulary_progress?.viewed_card_ids || [],
+        viewedCardCount: finalProgress?.vocabulary_progress?.viewed_card_ids?.length || 0,
+        totalCards,
+        completed,
+        completedAt: finalProgress?.vocabulary_progress?.completed_at ?? null,
+      },
+    };
   }
 
   private async ensureUserExists(userId: string) {

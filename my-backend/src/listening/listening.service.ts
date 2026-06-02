@@ -159,6 +159,11 @@ export class ListeningService {
     return units.map((unit) => this.mapLearningUnit(unit, unit.level_id));
   }
 
+  async getAllLevels() {
+    const levels = await Level.find().sort({ code: 1, created_at: 1 });
+    return levels.map((level) => this.mapLevel(level));
+  }
+
   async createPlace(createDto: CreatePlaceDto) {
     const place = await Place.create({
       name_vi: createDto.nameVi,
@@ -1111,13 +1116,18 @@ export class ListeningService {
       titleJa: unit.title_ja,
       description: unit.description ?? null,
       level: level
-        ? {
-            id: String(level._id),
-            code: level.code,
-            nameVi: level.name_vi ?? null,
-            nameJa: level.name_ja,
-          }
+        ? this.mapLevel(level)
         : null,
+    };
+  }
+
+  private mapLevel(level: any) {
+    return {
+      id: String(level._id),
+      code: level.code,
+      nameVi: level.name_vi ?? null,
+      nameJa: level.name_ja,
+      description: level.description ?? null,
     };
   }
 }

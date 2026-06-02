@@ -81,8 +81,22 @@ type ListeningSituationFullResponse = ListeningSituationResponse & {
 
 type LearningUnitResponse = {
   id: string;
+  levelId?: string;
   titleVi?: string;
   titleJa?: string;
+  level?: {
+    id?: string;
+    code?: string;
+    nameVi?: string | null;
+    nameJa?: string | null;
+  } | null;
+};
+
+type LevelResponse = {
+  id: string;
+  code?: string;
+  nameVi?: string | null;
+  nameJa?: string | null;
 };
 
 type ListeningLessonResponse = {
@@ -198,6 +212,15 @@ export default function AdminContentScreen() {
   const [isContentLoading, setIsContentLoading] = useState(true);
   const [contentError, setContentError] = useState<string | null>(null);
   const [ambientOptions, setAmbientOptions] = useState<AmbientOption[]>([]);
+  const [levels, setLevels] = useState<LevelResponse[]>([]);
+  const [learningUnitOptions, setLearningUnitOptions] = useState<
+    LearningUnitResponse[]
+  >([]);
+  const [selectedLearningUnitId, setSelectedLearningUnitId] = useState("");
+  const [selectedLevelId, setSelectedLevelId] = useState("");
+  const [learningUnitTitleInput, setLearningUnitTitleInput] = useState("");
+  const [isCreateLearningUnitMode, setIsCreateLearningUnitMode] =
+    useState(false);
   const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
   const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState({
@@ -349,7 +372,8 @@ export default function AdminContentScreen() {
   }, [selectedUnit, activeLocation]);
 
   const activeUnitId = activeUnit?.id ?? null;
-  const activeLearningUnitId = activeUnit?.learningUnitId ?? null;
+  const activeLearningUnitId =
+    selectedLearningUnitId || activeUnit?.learningUnitId || null;
   const activeUnitTitle = activeUnit?.title ?? "";
   const activeLocationId = activeLocation?.id ?? null;
   const activeLessonId = activeLesson?.id ?? activeLesson?._id ?? null;
@@ -420,6 +444,79 @@ export default function AdminContentScreen() {
   useEffect(() => {
     let isMounted = true;
 
+    const loadLevels = async () => {
+      try {
+        const response = await apiCall<LevelResponse[]>("/listening/levels");
+        if (isMounted) {
+          setLevels(Array.isArray(response) ? response : []);
+        }
+      } catch (error) {
+        console.error("Failed to load levels", error);
+      }
+    };
+
+    void loadLevels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadLearningUnitsForSituation = async () => {
+      if (!activeUnitId) {
+        if (isMounted) {
+          setLearningUnitOptions([]);
+          setSelectedLearningUnitId("");
+          setIsCreateLearningUnitMode(false);
+          setSelectedLevelId("");
+          setLearningUnitTitleInput("");
+        }
+        return;
+      }
+
+      try {
+        const units = await apiCall<LearningUnitResponse[]>(
+          `/listening/situations/${activeUnitId}/learning-units`,
+        );
+        if (!isMounted) return;
+
+        const normalizedUnits = Array.isArray(units) ? units : [];
+        setLearningUnitOptions(normalizedUnits);
+
+        if (normalizedUnits.length > 0) {
+          const defaultUnit = normalizedUnits[0];
+          setSelectedLearningUnitId(defaultUnit.id);
+          setSelectedLevelId(defaultUnit.levelId || defaultUnit.level?.id || "");
+          setLearningUnitTitleInput(defaultUnit.titleVi || defaultUnit.titleJa || "");
+          setIsCreateLearningUnitMode(false);
+        } else {
+          setSelectedLearningUnitId("");
+          setIsCreateLearningUnitMode(true);
+          setSelectedLevelId((current) => current || levels[0]?.id || "");
+          setLearningUnitTitleInput(activeUnit?.title || "");
+        }
+      } catch (error) {
+        console.error("Failed to load learning units for situation", error);
+        if (!isMounted) return;
+        setLearningUnitOptions([]);
+        setSelectedLearningUnitId("");
+        setIsCreateLearningUnitMode(true);
+      }
+    };
+
+    void loadLearningUnitsForSituation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeUnitId, activeUnit?.title, levels]);
+
+  useEffect(() => {
+    let isMounted = true;
+
     const loadUnitDetails = async () => {
       if (!activeUnitId) {
         if (isMounted) {
@@ -436,7 +533,7 @@ export default function AdminContentScreen() {
           setActiveLesson(null);
           setListeningRows([]);
           setVocabRows([]);
-          setDetailError("Chưa có learning unit cho tình huống này.");
+
         }
         return;
       }
@@ -584,58 +681,71 @@ export default function AdminContentScreen() {
     const lessonAudioUrl = activeLesson?.audio_url || "";
     const lessonDurationSeconds = activeLesson?.duration_seconds ?? 0;
 
-    draftWorkflow.setDraft((currentDraft) => ({
-      ...currentDraft,
-      contentId: `admin-content-${activeUnit.id}`,
-      status:
-        currentDraft.status === "PUBLISHED"
-          ? "PUBLISHED"
-          : currentDraft.publishedAt
-            ? "DRAFT"
-            : activeUnit.status === "published"
-              ? "PUBLISHED"
-              : "DRAFT",
-      placeId: activeLocation.id,
-      placeNameVi: activeLocation.label,
-      placeNameJa: activeLocation.label,
-      situationId: activeUnit.id,
-      situationTitleVi: activeUnit.title,
-      situationTitleJa: activeUnit.title,
-      learningUnitId: activeLearningUnitId ?? undefined,
-      titleVi: lessonTitleVi,
-      titleJa: lessonTitleJa,
-      description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
-      vocabCards: vocabRows.map((row) => ({
-        id: row.id,
-        term: row.term,
-        type: row.type,
-        meaning: row.meaning,
-        example: row.example,
-        note: row.pronunciation,
-      })),
-      listening: {
-        lessonId: activeLessonId ?? undefined,
-        titleVi: lessonTitleVi,
-        titleJa: lessonTitleJa,
-        audioUrl: lessonAudioUrl,
-        durationSeconds: lessonDurationSeconds,
-        description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-        ambientSoundIds:
-          currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
-        transcriptLines: listeningRows.map((row) => ({
-          id: row.index,
-          vi: row.vi,
-          jp: row.jp,
-          timestamp: row.timestamp,
+    draftWorkflow.setDraft((currentDraft) => {
+      const nextDraft = {
+        ...currentDraft,
+        contentId: `admin-content-${activeUnit.id}`,
+        status:
+          currentDraft.status === "PUBLISHED"
+            ? "PUBLISHED"
+            : currentDraft.publishedAt
+              ? "DRAFT"
+              : activeUnit.status === "published"
+                ? "PUBLISHED"
+                : "DRAFT",
+        placeId: activeLocation.id,
+        placeNameVi: activeLocation.label,
+        placeNameJa: activeLocation.label,
+        situationId: activeUnit.id,
+        situationTitleVi: activeUnit.title,
+        situationTitleJa: activeUnit.title,
+        learningUnitId: activeLearningUnitId ?? undefined,
+        levelId:
+          selectedLevelId ||
+          learningUnitOptions.find((unit) => unit.id === activeLearningUnitId)
+            ?.levelId,
+        titleVi: learningUnitTitleInput || lessonTitleVi,
+        titleJa: learningUnitTitleInput || lessonTitleJa,
+        description: `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit.title}.`,
+        vocabCards: vocabRows.map((row) => ({
+          id: row.id,
+          term: row.term,
+          type: row.type,
+          meaning: row.meaning,
+          example: row.example,
+          note: row.pronunciation,
         })),
-      },
-    }));
+        listening: {
+          lessonId: activeLessonId ?? undefined,
+          titleVi: lessonTitleVi,
+          titleJa: lessonTitleJa,
+          audioUrl: lessonAudioUrl,
+          durationSeconds: lessonDurationSeconds,
+          description: `Bài nghe cho tình huống ${activeUnit.title}.`,
+          ambientSoundIds:
+            currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
+          transcriptLines: listeningRows.map((row) => ({
+            id: row.index,
+            vi: row.vi,
+            jp: row.jp,
+            timestamp: row.timestamp,
+          })),
+        },
+      };
+
+      return JSON.stringify(nextDraft) === JSON.stringify(currentDraft)
+        ? currentDraft
+        : nextDraft;
+    });
   }, [
     activeLocation,
     activeUnit,
     activeLesson,
     activeLessonId,
     activeLearningUnitId,
+    selectedLevelId,
+    learningUnitTitleInput,
+    learningUnitOptions,
     listeningRows,
     vocabRows,
     defaultAmbientIds,
@@ -778,8 +888,20 @@ export default function AdminContentScreen() {
     situationTitleVi: activeUnit?.title ?? draftWorkflow.draft.situationTitleVi,
     situationTitleJa: activeUnit?.title ?? draftWorkflow.draft.situationTitleJa,
     learningUnitId: activeLearningUnitId ?? draftWorkflow.draft.learningUnitId,
-    titleVi: activeLesson?.title_vi || activeUnit?.title || draftWorkflow.draft.titleVi,
-    titleJa: activeLesson?.title_ja || activeUnit?.title || draftWorkflow.draft.titleJa,
+    levelId:
+      selectedLevelId ||
+      learningUnitOptions.find((unit) => unit.id === activeLearningUnitId)?.levelId ||
+      draftWorkflow.draft.levelId,
+    titleVi:
+      learningUnitTitleInput ||
+      activeLesson?.title_vi ||
+      activeUnit?.title ||
+      draftWorkflow.draft.titleVi,
+    titleJa:
+      learningUnitTitleInput ||
+      activeLesson?.title_ja ||
+      activeUnit?.title ||
+      draftWorkflow.draft.titleJa,
     description:
       draftWorkflow.draft.description ||
       `Nội dung luyện nghe và từ vựng cho tình huống ${activeUnit?.title ?? ""}.`,
@@ -880,19 +1002,24 @@ export default function AdminContentScreen() {
       return;
     }
 
+    if (!selectedLearningUnitId && !selectedLevelId) {
+      setSaveStatus("error");
+      setLocationToast("Can chon level truoc khi tao LearningUnit moi.");
+      window.setTimeout(() => setLocationToast(null), 3000);
+      return;
+    }
+
+    if (!selectedLearningUnitId && !learningUnitTitleInput.trim()) {
+      setSaveStatus("error");
+      setLocationToast("Can nhap ten bai hoc truoc khi publish.");
+      window.setTimeout(() => setLocationToast(null), 3000);
+      return;
+    }
+
     setSaveStatus("saving");
 
     try {
       const publishResult = await draftWorkflow.publish(buildCurrentDraftSnapshot());
-      const vocabularyCardIds = publishResult.vocabularyCardIds;
-      if (vocabularyCardIds.length > 0) {
-        setVocabRows((currentRows) =>
-          currentRows.map((row, index) => ({
-            ...row,
-            id: vocabularyCardIds[index] ?? row.id,
-          })),
-        );
-      }
       setLocationsState((prev) =>
         prev.map((location) =>
           location.id === activeLocation.id
@@ -905,6 +1032,7 @@ export default function AdminContentScreen() {
                         status: "published",
                         vocabCount: vocabRows.length,
                         listeningCount: listeningRows.length,
+                        learningUnitId: publishResult.learningUnitId,
                       }
                     : unit,
                 ),
@@ -912,6 +1040,8 @@ export default function AdminContentScreen() {
             : location,
         ),
       );
+      setSelectedLearningUnitId(publishResult.learningUnitId);
+      setIsCreateLearningUnitMode(false);
       setSaveStatus("saved");
       setLocationToast(
         "Đã xuất bản nội dung. Learner có thể xem nội dung mới.",
@@ -927,44 +1057,161 @@ export default function AdminContentScreen() {
     window.setTimeout(() => setLocationToast(null), 3000);
   };
 
-  const handleSaveVocab = () => {
-    if (!activeLearningUnitId) {
-      setVocabToast("Chưa có learning unit cho tình huống này.");
-      window.setTimeout(() => setVocabToast(null), 2400);
-      return;
-    }
+  const handleSaveVocab = async () => {
+    const isDraftOnly = !activeLearningUnitId;
 
-    if (vocabModal === "add") {
-      const nextRows = normalizeVocabRows([
-        ...vocabRows,
-        {
-          index: String(vocabRows.length + 1),
-          term: vocabForm.term,
-          type: vocabForm.type,
-          meaning: vocabForm.meaning,
-          example: vocabForm.example,
-          pronunciation: vocabForm.pronunciation,
-        },
-      ]);
+    setSaveStatus("saving");
 
-      applyLocalVocabRows(nextRows);
-      setSaveStatus("saved");
-      setVocabModal(null);
-      setVocabToast("Đã lưu nháp thẻ từ vựng.");
-    } else if (vocabModal === "edit" && vocabToEditIndex) {
-      const nextRows = normalizeVocabRows(
-        vocabRows.map((row) =>
-          row.index === vocabToEditIndex
-            ? {
-                ...row,
-                term: vocabForm.term,
-                type: vocabForm.type,
-                meaning: vocabForm.meaning,
-                example: vocabForm.example,
-                pronunciation: vocabForm.pronunciation,
-              }
-            : row,
-        ),
+    try {
+      if (vocabModal === "add") {
+        if (isDraftOnly) {
+          const nextRows = normalizeVocabRows([
+            ...vocabRows,
+            {
+              id: undefined,
+              index: String(vocabRows.length + 1),
+              term: vocabForm.term,
+              type: vocabForm.type,
+              meaning: vocabForm.meaning,
+              example: vocabForm.example,
+              pronunciation: vocabForm.pronunciation,
+            },
+          ]);
+
+          setVocabRows(nextRows);
+          setLocationsState((prev) =>
+            prev.map((location) => ({
+              ...location,
+              units: location.units.map((unit) =>
+                unit.id === activeUnitId
+                  ? { ...unit, vocabCount: nextRows.length }
+                  : unit,
+              ),
+            })),
+          );
+
+          setSaveStatus("saved");
+          setVocabModal(null);
+          setVocabToast("Da luu nhap local. Bam Xuat ban de dong bo len he thong.");
+          window.setTimeout(() => setVocabToast(null), 2400);
+          return;
+        }
+
+        const payload = {
+          learning_unit_id: activeLearningUnitId,
+          word_vi: vocabForm.term,
+          meaning_ja: vocabForm.meaning,
+          example_vi: vocabForm.example || undefined,
+          note: vocabForm.pronunciation || undefined,
+          tag: vocabForm.type || undefined,
+        };
+
+        const created = await apiCall<{ data?: VocabCardResponse }>(
+          "/vocabulary/admin/create",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+        );
+
+        const createdCard = created.data ?? (created as VocabCardResponse);
+        const nextRows = normalizeVocabRows([
+          ...vocabRows,
+          {
+            id: createdCard.id,
+            index: String(vocabRows.length + 1),
+            term: createdCard.wordVi ?? vocabForm.term,
+            type: createdCard.tag ?? vocabForm.type,
+            meaning: createdCard.meaningJa ?? vocabForm.meaning,
+            example: createdCard.exampleVi ?? vocabForm.example,
+            pronunciation: createdCard.note ?? vocabForm.pronunciation,
+          },
+        ]);
+
+        setVocabRows(nextRows);
+        setLocationsState((prev) =>
+          prev.map((location) => ({
+            ...location,
+            units: location.units.map((unit) =>
+              unit.id === activeUnitId ? { ...unit, vocabCount: nextRows.length } : unit,
+            ),
+          })),
+        );
+
+        setSaveStatus("saved");
+        setVocabModal(null);
+        setVocabToast("Da them the tu vung.");
+      } else if (vocabModal === "edit" && vocabToEditIndex) {
+        const existingRow = vocabRows.find((row) => row.index === vocabToEditIndex);
+
+        if (!isDraftOnly && existingRow?.id) {
+          const payload = {
+            learning_unit_id: activeLearningUnitId,
+            word_vi: vocabForm.term,
+            meaning_ja: vocabForm.meaning,
+            example_vi: vocabForm.example || undefined,
+            note: vocabForm.pronunciation || undefined,
+            tag: vocabForm.type || undefined,
+          };
+
+          const updated = await apiCall<{ data?: VocabCardResponse }>(
+            `/vocabulary/admin/${existingRow.id}`,
+            {
+              method: "PUT",
+              body: JSON.stringify(payload),
+            },
+          );
+
+          const updatedCard = updated.data ?? (updated as VocabCardResponse);
+          const nextRows = normalizeVocabRows(
+            vocabRows.map((row) =>
+              row.index === vocabToEditIndex
+                ? {
+                    ...row,
+                    term: updatedCard.wordVi ?? vocabForm.term,
+                    type: updatedCard.tag ?? vocabForm.type,
+                    meaning: updatedCard.meaningJa ?? vocabForm.meaning,
+                    example: updatedCard.exampleVi ?? vocabForm.example,
+                    pronunciation: updatedCard.note ?? vocabForm.pronunciation,
+                  }
+                : row,
+            ),
+          );
+
+          setVocabRows(nextRows);
+        } else {
+          const nextRows = normalizeVocabRows(
+            vocabRows.map((row) =>
+              row.index === vocabToEditIndex
+                ? {
+                    ...row,
+                    term: vocabForm.term,
+                    type: vocabForm.type,
+                    meaning: vocabForm.meaning,
+                    example: vocabForm.example,
+                    pronunciation: vocabForm.pronunciation,
+                  }
+                : row,
+            ),
+          );
+
+          setVocabRows(nextRows);
+        }
+
+        setSaveStatus("saved");
+        setVocabModal(null);
+        setVocabToEditIndex(null);
+        setVocabToast(
+          isDraftOnly
+            ? "Da luu nhap local. Bam Xuat ban de dong bo len he thong."
+            : "Da cap nhat the tu vung.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to save vocab", error);
+      setSaveStatus("error");
+      setVocabToast(
+        error instanceof Error ? error.message : "Khong the luu the tu vung.",
       );
 
       applyLocalVocabRows(nextRows);
@@ -976,7 +1223,6 @@ export default function AdminContentScreen() {
 
     window.setTimeout(() => setVocabToast(null), 2400);
   };
-
   const handleDeleteVocab = async () => {
     if (!deleteVocabIndex) {
       return;
@@ -1341,6 +1587,90 @@ export default function AdminContentScreen() {
                           </button>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="border-b border-[#eef2ee] bg-[#fafcfb] px-8 py-4">
+                      <p className="text-xs font-semibold text-[#2f5d50]">
+                        Cau truc noi dung: Dia diem -&gt; Tinh huong -&gt; Bai hoc (Learning Unit)
+                      </p>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <label className="flex flex-col gap-1 text-xs text-[#7b8b83]">
+                          Chon bai hoc da co
+                          <select
+                            value={selectedLearningUnitId}
+                            onChange={(e) => {
+                              const nextId = e.target.value;
+                              setSelectedLearningUnitId(nextId);
+                              const selectedUnitOption = learningUnitOptions.find(
+                                (unit) => unit.id === nextId,
+                              );
+                              if (selectedUnitOption) {
+                                setSelectedLevelId(
+                                  selectedUnitOption.levelId ||
+                                    selectedUnitOption.level?.id ||
+                                    "",
+                                );
+                                setLearningUnitTitleInput(
+                                  selectedUnitOption.titleVi ||
+                                    selectedUnitOption.titleJa ||
+                                    "",
+                                );
+                                setIsCreateLearningUnitMode(false);
+                              }
+                            }}
+                            className="h-10 rounded-xl border border-[#e6ece6] bg-white px-3 text-sm text-[#1f2b27]"
+                          >
+                            <option value="">Tao bai hoc moi</option>
+                            {learningUnitOptions.map((unit) => (
+                              <option key={unit.id} value={unit.id}>
+                                {(unit.titleVi || unit.titleJa || "Bai hoc") +
+                                  (unit.level?.code ? ` (${unit.level.code})` : "")}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs text-[#7b8b83]">
+                          Level
+                          <select
+                            value={selectedLevelId}
+                            onChange={(e) => {
+                              setSelectedLevelId(e.target.value);
+                              if (selectedLearningUnitId) {
+                                setSelectedLearningUnitId("");
+                                setIsCreateLearningUnitMode(true);
+                              }
+                            }}
+                            className="h-10 rounded-xl border border-[#e6ece6] bg-white px-3 text-sm text-[#1f2b27]"
+                          >
+                            <option value="">Chon level</option>
+                            {levels.map((level) => (
+                              <option key={level.id} value={level.id}>
+                                {level.code || level.nameVi || level.nameJa || level.id}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs text-[#7b8b83]">
+                          Ten bai hoc
+                          <input
+                            value={learningUnitTitleInput}
+                            onChange={(e) => {
+                              setLearningUnitTitleInput(e.target.value);
+                              if (selectedLearningUnitId) {
+                                setSelectedLearningUnitId("");
+                                setIsCreateLearningUnitMode(true);
+                              }
+                            }}
+                            placeholder="VD: Thanh toan tai sieu thi"
+                            className="h-10 rounded-xl border border-[#e6ece6] bg-white px-3 text-sm text-[#1f2b27]"
+                          />
+                        </label>
+                      </div>
+                      <p className="mt-2 text-[11px] text-[#7b8b83]">
+                        {!isCreateLearningUnitMode && selectedLearningUnitId
+                          ? "Dang su dung LearningUnit da co. Publish se dung learningUnitId nay."
+                          : "Dang o che do tao moi. Publish se tao LearningUnit moi theo level + ten bai hoc."}
+                      </p>
                     </div>
 
                     <div className=" flex items-center gap-4 border-b px-8 pt-4 border-[#eef2ee] text-sm font-semibold">
@@ -2691,7 +3021,17 @@ export default function AdminContentScreen() {
                         ),
                       );
                       setSaveStatus("error");
-                      setLocationToast("Không thể thêm tình huống.");
+                      const statusCode =
+                        typeof error === "object" &&
+                        error !== null &&
+                        "statusCode" in error
+                          ? Number((error as { statusCode?: unknown }).statusCode)
+                          : undefined;
+                      setLocationToast(
+                        statusCode === 403
+                          ? "Bạn không có quyền admin. Vui lòng đăng nhập bằng tài khoản admin."
+                          : "Không thể thêm tình huống.",
+                      );
                     }
 
                     setIsAddSituationOpen(false);
@@ -2913,7 +3253,7 @@ function StatusDot({
   ariaLabel,
 }: {
   status: Status;
-  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onClick?: (event: React.MouseEvent<HTMLSpanElement>) => void;
   ariaLabel?: string;
 }) {
   const colors = {
@@ -2924,10 +3264,17 @@ function StatusDot({
 
   if (onClick) {
     return (
-      <button
-        type="button"
+      <span
+        role="button"
+        tabIndex={0}
         aria-label={ariaLabel || "Edit"}
         onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick(event as unknown as React.MouseEvent<HTMLSpanElement>);
+          }
+        }}
         className={`h-2.5 w-2.5 rounded-full ${colors[status]}`}
       />
     );
@@ -3430,3 +3777,5 @@ function SaveIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+

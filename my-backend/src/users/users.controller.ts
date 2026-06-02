@@ -154,4 +154,23 @@ export class UsersController {
       updateDto,
     );
   }
+
+  @Patch('me/progress/vocabulary-units/:learningUnitId/cards/:cardId')
+  @ApiOperation({ summary: 'Mark a vocabulary card as viewed' })
+  @ApiParam({ name: 'learningUnitId', description: 'Learning unit id' })
+  @ApiParam({ name: 'cardId', description: 'Vocabulary card id' })
+  @ApiOkResponse({
+    description: 'Updated vocabulary progress for the learning unit',
+  })
+  markVocabularyCardViewed(
+    @Request() req: any,
+    @Param('learningUnitId') learningUnitId: string,
+    @Param('cardId') cardId: string,
+  ) {
+    return this.usersService.markVocabularyCardViewed(
+      req.user.userId,
+      learningUnitId,
+      cardId,
+    );
+  }
 }
