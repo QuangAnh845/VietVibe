@@ -927,13 +927,13 @@ export default function AdminContentScreen() {
     resetNewRow();
   };
 
-  const handleCopyTimestamp = async (rowIndex: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch (error) {
-      console.error(error);
-    }
-    setTimestampToast(`Đã lấy thời gian cho #${rowIndex}.`);
+  const handleCopyTimestamp = (rowIndex: string) => {
+    const formattedTime = formatDuration(audioCurrentTime);
+    const nextRows = listeningRows.map((item) =>
+      item.index === rowIndex ? { ...item, timestamp: formattedTime } : item
+    );
+    applyLocalListeningRows(nextRows);
+    setTimestampToast(`Đã điền timestamp ${formattedTime} cho #${rowIndex}.`);
     window.setTimeout(() => setTimestampToast(null), 2200);
   };
 
@@ -1775,7 +1775,19 @@ export default function AdminContentScreen() {
                                                   }
                                                   className="h-9 w-16 rounded-xl border border-(--var-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
                                                 />
-                                                <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setEditDraft((prev) => ({
+                                                      ...prev,
+                                                      timestamp: formatDuration(audioCurrentTime),
+                                                    }))
+                                                  }
+                                                  title="Lấy timestamp hiện tại"
+                                                  className="hover:scale-110 active:scale-95 transition-transform"
+                                                >
+                                                  <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                                </button>
                                               </div>
                                             </td>
                                             <td className="px-4 py-3">
@@ -1831,7 +1843,6 @@ export default function AdminContentScreen() {
                                                 onClick={() =>
                                                   handleCopyTimestamp(
                                                     row.index,
-                                                    row.timestamp,
                                                   )
                                                 }
                                                 className="flex items-center gap-2"
@@ -1905,7 +1916,19 @@ export default function AdminContentScreen() {
                                               }
                                               className="h-9 w-16 rounded-xl border border-(--vv-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
                                             />
-                                            <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setNewRow((prev) => ({
+                                                  ...prev,
+                                                  timestamp: formatDuration(audioCurrentTime),
+                                                }))
+                                              }
+                                              title="Lấy timestamp hiện tại"
+                                              className="hover:scale-110 active:scale-95 transition-transform"
+                                            >
+                                              <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                            </button>
                                           </div>
                                         </td>
                                         <td className="px-4 py-3">

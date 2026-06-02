@@ -275,6 +275,7 @@ export default function ListeningScreen() {
   const [lineDurations, setLineDurations] = useState<Record<string, number>>(
     {},
   );
+  const hasSplitLines = useMemo(() => lines.some((line) => !!lineAudioUrls[line.id]), [lines, lineAudioUrls]);
   const [vocabIndex, setVocabIndex] = useState(0);
   const [vocabFlipped, setVocabFlipped] = useState(false);
   const [, setVocabFlippedCardIds] = useState<Set<string>>(() => new Set());
@@ -705,9 +706,9 @@ export default function ListeningScreen() {
     ? lines.reduce((total, line) => total + getLineDuration(line), 0)
     : 0;
 
-  const totalAudioDuration = calculatedDuration > 0
-    ? calculatedDuration
-    : (lesson?.durationSeconds ?? 0);
+  const totalAudioDuration = !hasSplitLines && lesson?.durationSeconds
+    ? lesson.durationSeconds
+    : (calculatedDuration > 0 ? calculatedDuration : 0);
 
   const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
 
@@ -918,7 +919,7 @@ export default function ListeningScreen() {
     currentIndexRef.current = index;
     const startTime = getAudioStartForLine(targetLine);
     setCurrentIndex(index);
-    setCurrentTime(getDisplayTimeForLine(index, startTime));
+    setCurrentTime(hasSplitLines ? getDisplayTimeForLine(index, startTime) : startTime);
 
     if (autoPlay) {
       await waitForNextFrame();
@@ -964,7 +965,7 @@ export default function ListeningScreen() {
           }
 
           audio.currentTime = lineStart;
-          setCurrentTime(getDisplayTimeForLine(currentIndex, lineStart));
+          setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, lineStart) : lineStart);
         }
       }
 
@@ -1039,13 +1040,13 @@ export default function ListeningScreen() {
         if (playMode === "study" || lineAudioUrls[currentLine.id]) {
           audio.pause();
           audio.currentTime = lineEnd;
-          setCurrentTime(getDisplayTimeForLine(currentIndex, lineEnd));
+          setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, lineEnd) : lineEnd);
           setIsPlaying(false);
           return;
         }
       }
 
-      setCurrentTime(getDisplayTimeForLine(currentIndex, time));
+      setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, time) : time);
 
       if (playMode === "study" || lineAudioUrls[currentLine.id]) {
         return;
@@ -1058,7 +1059,7 @@ export default function ListeningScreen() {
         currentIndexRef.current = activeLineIndex;
         setCurrentIndex(activeLineIndex);
       }
-      setCurrentTime(getDisplayTimeForLine(activeLineIndex, time));
+      setCurrentTime(hasSplitLines ? getDisplayTimeForLine(activeLineIndex, time) : time);
     }
   };
 
