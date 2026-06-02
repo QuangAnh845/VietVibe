@@ -106,6 +106,8 @@ type ListeningLessonResponse = {
   title_ja?: string;
   audio_url?: string;
   duration_seconds?: number;
+  ambient_sound_ids?: string[];
+  ambientSoundIds?: string[];
   transcriptLines?: TranscriptLineResponse[];
 };
 
@@ -212,6 +214,12 @@ export default function AdminContentScreen() {
   const [isContentLoading, setIsContentLoading] = useState(true);
   const [contentError, setContentError] = useState<string | null>(null);
   const [ambientOptions, setAmbientOptions] = useState<AmbientOption[]>([]);
+  const [activeAmbientIds, setActiveAmbientIds] = useState<string[]>([]);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
   const [levels, setLevels] = useState<LevelResponse[]>([]);
   const [learningUnitOptions, setLearningUnitOptions] = useState<
     LearningUnitResponse[]
@@ -381,6 +389,31 @@ export default function AdminContentScreen() {
   const selectedAmbientIds =
     draftWorkflow.draft.listening?.ambientSoundIds ?? defaultAmbientIds;
 
+  const getSituationStatus = (unit: Unit): Status => {
+    if (unit.id === activeUnit?.id) {
+      if (draftWorkflow.draft.status === "PUBLISHED") return "published";
+      if (draftWorkflow.draft.publishedAt) return "edited";
+      return "draft";
+    }
+
+    const localDraft = getAdminContentDraftFromBrowser(`admin-content-${unit.id}`);
+    if (localDraft) {
+      if (localDraft.status === "PUBLISHED") return "published";
+      if (localDraft.publishedAt) return "edited";
+      return "draft";
+    }
+
+    return unit.learningUnitId ? "published" : "draft";
+  };
+
+  const getLocationStatus = (location: Location): Status => {
+    if (location.units.length === 0) return "draft";
+    const statuses = location.units.map(getSituationStatus);
+    if (statuses.includes("draft")) return "draft";
+    if (statuses.includes("edited")) return "edited";
+    return "published";
+  };
+
   const filteredLocations = useMemo(() => {
     const normalized = contentQuery.trim().toLowerCase();
     if (!normalized) return locationsState;
@@ -400,6 +433,89 @@ export default function AdminContentScreen() {
       ),
     );
   }, [ambientQuery, ambientOptions]);
+
+  const resolveAudioUrl = (audioUrl: string) => {
+    if (!audioUrl) return "";
+    if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    return audioUrl.startsWith("/")
+      ? `${API_BASE_URL}${audioUrl}`
+      : `${API_BASE_URL}/${audioUrl}`;
+  };
+
+  useEffect(() => {
+    const audioUrl = activeLesson?.audio_url;
+    if (!audioUrl) {
+      setIsPlayingAudio(false);
+      setAudioCurrentTime(0);
+      setAudioDuration(0);
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+      return;
+    }
+
+    const resolvedUrl = resolveAudioUrl(audioUrl);
+    const audio = new Audio(resolvedUrl);
+    previewAudioRef.current = audio;
+
+    const handlePlay = () => setIsPlayingAudio(true);
+    const handlePause = () => setIsPlayingAudio(false);
+    const handleTimeUpdate = () => {
+      setAudioCurrentTime(audio.currentTime);
+    };
+    const handleLoadedMetadata = () => {
+      setAudioDuration(audio.duration);
+    };
+    const handleEnded = () => {
+      setIsPlayingAudio(false);
+      setAudioCurrentTime(0);
+    };
+
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.pause();
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("ended", handleEnded);
+      previewAudioRef.current = null;
+    };
+  }, [activeLesson?.audio_url]);
+
+  const togglePlayAudio = () => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+
+    if (isPlayingAudio) {
+      audio.pause();
+    } else {
+      audio.play().catch((err) => {
+        console.error("Failed to play preview audio", err);
+      });
+    }
+  };
+
+  const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const bar = progressBarRef.current;
+    const audio = previewAudioRef.current;
+    if (!bar || !audio || audioDuration <= 0) return;
+
+    const rect = bar.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = percentage * audioDuration;
+
+    audio.currentTime = newTime;
+    setAudioCurrentTime(newTime);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -523,6 +639,7 @@ export default function AdminContentScreen() {
           setActiveLesson(null);
           setListeningRows([]);
           setVocabRows([]);
+          setActiveAmbientIds([]);
           setDetailError(null);
         }
         return;
@@ -533,7 +650,8 @@ export default function AdminContentScreen() {
           setActiveLesson(null);
           setListeningRows([]);
           setVocabRows([]);
-
+          setActiveAmbientIds([]);
+          setDetailError("Chưa có learning unit cho tình huống này.");
         }
         return;
       }
@@ -568,6 +686,7 @@ export default function AdminContentScreen() {
           let nextListeningRows: ScriptRow[] = [];
           let nextVocabRows: VocabRow[] = [];
           let finalLesson: ListeningLessonResponse | null = null;
+          let loadedAmbientIds: string[] = [];
 
           if (localDraft && localDraft.listening) {
             finalLesson = {
@@ -594,6 +713,8 @@ export default function AdminContentScreen() {
               example: card.example || "",
               pronunciation: card.note || "",
             }));
+
+            loadedAmbientIds = localDraft.listening.ambientSoundIds ?? defaultAmbientIds;
           } else {
             if (backendLesson) {
               finalLesson = backendLesson;
@@ -607,6 +728,10 @@ export default function AdminContentScreen() {
                 timestamp: formatTimestamp(line.start_time ?? 0),
                 endTimeSeconds: line.end_time,
               }));
+
+              loadedAmbientIds = backendLesson.ambient_sound_ids ?? backendLesson.ambientSoundIds ?? defaultAmbientIds;
+            } else {
+              loadedAmbientIds = defaultAmbientIds;
             }
 
             const vocabCards = Array.isArray(backendVocab.data) ? backendVocab.data : [];
@@ -624,6 +749,7 @@ export default function AdminContentScreen() {
           setActiveLesson(finalLesson);
           setListeningRows(nextListeningRows);
           setVocabRows(nextVocabRows);
+          setActiveAmbientIds(loadedAmbientIds.map(String));
           setEditingRow(null);
           setIsAddingRow(false);
 
@@ -685,14 +811,13 @@ export default function AdminContentScreen() {
       const nextDraft = {
         ...currentDraft,
         contentId: `admin-content-${activeUnit.id}`,
-        status:
-          currentDraft.status === "PUBLISHED"
-            ? "PUBLISHED"
-            : currentDraft.publishedAt
-              ? "DRAFT"
-              : activeUnit.status === "published"
-                ? "PUBLISHED"
-                : "DRAFT",
+        status: (currentDraft.status === "PUBLISHED"
+          ? "PUBLISHED"
+          : currentDraft.publishedAt
+            ? "DRAFT"
+            : activeUnit.status === "published"
+              ? "PUBLISHED"
+              : "DRAFT") as "DRAFT" | "PUBLISHED",
         placeId: activeLocation.id,
         placeNameVi: activeLocation.label,
         placeNameJa: activeLocation.label,
@@ -722,8 +847,7 @@ export default function AdminContentScreen() {
           audioUrl: lessonAudioUrl,
           durationSeconds: lessonDurationSeconds,
           description: `Bài nghe cho tình huống ${activeUnit.title}.`,
-          ambientSoundIds:
-            currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds,
+          ambientSoundIds: activeAmbientIds,
           transcriptLines: listeningRows.map((row) => ({
             id: row.index,
             vi: row.vi,
@@ -748,7 +872,7 @@ export default function AdminContentScreen() {
     learningUnitOptions,
     listeningRows,
     vocabRows,
-    defaultAmbientIds,
+    activeAmbientIds,
     draftWorkflow.setDraft,
   ]);
 
@@ -949,39 +1073,20 @@ export default function AdminContentScreen() {
     resetNewRow();
   };
 
-  const handleCopyTimestamp = async (rowIndex: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch (error) {
-      console.error(error);
-    }
-    setTimestampToast(`Đã lấy thời gian cho #${rowIndex}.`);
+  const handleCopyTimestamp = (rowIndex: string) => {
+    const formattedTime = formatDuration(audioCurrentTime);
+    const nextRows = listeningRows.map((item) =>
+      item.index === rowIndex ? { ...item, timestamp: formattedTime } : item
+    );
+    applyLocalListeningRows(nextRows);
+    setTimestampToast(`Đã điền timestamp ${formattedTime} cho #${rowIndex}.`);
     window.setTimeout(() => setTimestampToast(null), 2200);
   };
 
   const toggleAmbientSelection = (id: string) => {
-    draftWorkflow.setDraft((currentDraft) => {
-      const currentAmbientIds =
-        currentDraft.listening?.ambientSoundIds ?? defaultAmbientIds;
-      const nextAmbientIds = currentAmbientIds.includes(id)
-        ? currentAmbientIds.filter((item) => item !== id)
-        : [...currentAmbientIds, id];
-
-      return {
-        ...currentDraft,
-        listening: {
-          ...(currentDraft.listening ?? {
-            titleVi: "",
-            titleJa: "",
-            audioUrl: "",
-            durationSeconds: 0,
-            description: "",
-            transcriptLines: [],
-          }),
-          ambientSoundIds: nextAmbientIds,
-        },
-      };
-    });
+    setActiveAmbientIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
   };
 
   const handleConfirmDelete = () => {
@@ -1198,7 +1303,7 @@ export default function AdminContentScreen() {
           setVocabRows(nextRows);
         }
 
-        setSaveStatus("saved");
+      setSaveStatus("saved");
         setVocabModal(null);
         setVocabToEditIndex(null);
         setVocabToast(
@@ -1213,12 +1318,6 @@ export default function AdminContentScreen() {
       setVocabToast(
         error instanceof Error ? error.message : "Khong the luu the tu vung.",
       );
-
-      applyLocalVocabRows(nextRows);
-      setSaveStatus("saved");
-      setVocabModal(null);
-      setVocabToEditIndex(null);
-      setVocabToast("Đã lưu nháp thẻ từ vựng.");
     }
 
     window.setTimeout(() => setVocabToast(null), 2400);
@@ -1354,42 +1453,32 @@ export default function AdminContentScreen() {
                                     />
                                     {location.label}
                                   </button>
-                                  <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
-                                    <IconButton
-                                      ariaLabel="Edit"
-                                      onClick={() => {
-                                        setIsEditLocationOpen(true);
-                                        setLocationForm({
-                                          id: location.id,
-                                          label: location.label,
-                                          icon: location.icon,
-                                        });
-                                      }}
-                                    >
-                                      <EditIcon className="h-4 w-4" />
-                                    </IconButton>
-                                    <IconButton
-                                      ariaLabel="Delete"
-                                      onClick={() =>
-                                        setDeleteLocationIdState(location.id)
-                                      }
-                                    >
-                                      <TrashIcon className="h-4 w-4" />
-                                    </IconButton>
+                                  <div className="flex items-center gap-2">
+                                    <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                                      <IconButton
+                                        ariaLabel="Edit"
+                                        onClick={() => {
+                                          setIsEditLocationOpen(true);
+                                          setLocationForm({
+                                            id: location.id,
+                                            label: location.label,
+                                            icon: location.icon,
+                                          });
+                                        }}
+                                      >
+                                        <EditIcon className="h-4 w-4" />
+                                      </IconButton>
+                                      <IconButton
+                                        ariaLabel="Delete"
+                                        onClick={() =>
+                                          setDeleteLocationIdState(location.id)
+                                        }
+                                      >
+                                        <TrashIcon className="h-4 w-4" />
+                                      </IconButton>
+                                    </div>
                                     <StatusDot
-                                      status={
-                                        location.units.some(
-                                          (unit) => unit.id === activeUnit?.id,
-                                        ) && draftWorkflow.draft.status ===
-                                          "PUBLISHED"
-                                          ? "published"
-                                          : location.units.some(
-                                                (unit) =>
-                                                  unit.id === activeUnit?.id,
-                                              ) && draftWorkflow.draft.publishedAt
-                                            ? "draft"
-                                            : location.status
-                                      }
+                                      status={getLocationStatus(location)}
                                     />
                                   </div>
                                 </div>
@@ -1429,59 +1518,10 @@ export default function AdminContentScreen() {
                                           }`}
                                         >
                                           <span>{unit.title}</span>
-                                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <IconButton
-                                              ariaLabel="Edit"
-                                              onClick={() => {
-                                                setIsEditSituationOpen(true);
-                                                setCurrentLocationId(location.id);
-                                                setSituationForm({
-                                                  id: unit.id,
-                                                  title: unit.title,
-                                                });
-                                              }}
-                                            >
-                                              <EditIcon className="h-4 w-4" />
-                                            </IconButton>
-
-                                            <IconButton
-                                              ariaLabel="Duplicate"
-                                              onClick={() => {
-                                                const newUnit = {
-                                                  id: `unit-${Date.now()}`,
-                                                  title: `${unit.title} (Copy)`,
-                                                  status: "draft" as Status,
-                                                  vocabCount: unit.vocabCount ?? 0,
-                                                  listeningCount: unit.listeningCount ?? 0,
-                                                  duration: unit.duration ?? "0:00",
-                                                };
-                                                setLocationsState((prev) =>
-                                                  prev.map((l) =>
-                                                    l.id === location.id
-                                                      ? { ...l, units: [...l.units, newUnit] }
-                                                      : l,
-                                                  ),
-                                                );
-                                                setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
-                                                window.setTimeout(() => setLocationToast(null), 2000);
-                                              }}
-                                            >
-                                              <PlusIcon className="h-4 w-4" />
-                                            </IconButton>
-
-                                            <div>
-                                              <StatusDot
-                                                status={
-                                                  unit.id === activeUnit?.id
-                                                    ? draftWorkflow.draft.status ===
-                                                      "PUBLISHED"
-                                                      ? "published"
-                                                      : draftWorkflow.draft.publishedAt
-                                                        ? "draft"
-                                                        : "draft"
-                                                    : unit.status
-                                                }
-                                                ariaLabel="Edit situation"
+                                          <div className="flex items-center gap-2">
+                                            <div className="invisible flex items-center gap-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                                              <IconButton
+                                                ariaLabel="Edit"
                                                 onClick={(event) => {
                                                   event.stopPropagation();
                                                   setIsEditSituationOpen(true);
@@ -1491,8 +1531,50 @@ export default function AdminContentScreen() {
                                                     title: unit.title,
                                                   });
                                                 }}
-                                              />
+                                              >
+                                                <EditIcon className="h-4 w-4" />
+                                              </IconButton>
+
+                                              <IconButton
+                                                ariaLabel="Duplicate"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  const newUnit = {
+                                                    id: `unit-${Date.now()}`,
+                                                    title: `${unit.title} (Copy)`,
+                                                    status: "draft" as Status,
+                                                    vocabCount: unit.vocabCount ?? 0,
+                                                    listeningCount: unit.listeningCount ?? 0,
+                                                    duration: unit.duration ?? "0:00",
+                                                  };
+                                                  setLocationsState((prev) =>
+                                                    prev.map((l) =>
+                                                      l.id === location.id
+                                                        ? { ...l, units: [...l.units, newUnit] }
+                                                        : l,
+                                                    ),
+                                                  );
+                                                  setLocationToast("Đã nhân bản tình huống (chỉ nháp).");
+                                                  window.setTimeout(() => setLocationToast(null), 2000);
+                                                }}
+                                              >
+                                                <PlusIcon className="h-4 w-4" />
+                                              </IconButton>
                                             </div>
+
+                                            <StatusDot
+                                              status={getSituationStatus(unit)}
+                                              ariaLabel="Edit situation"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                setIsEditSituationOpen(true);
+                                                setCurrentLocationId(location.id);
+                                                setSituationForm({
+                                                  id: unit.id,
+                                                  title: unit.title,
+                                                });
+                                              }}
+                                            />
                                           </div>
                                         </button>
                                       ))}
@@ -1546,9 +1628,7 @@ export default function AdminContentScreen() {
                               {activeUnit.title}
                             </h2>
                             <p className="mt-1 text-[11px] text-[#9aa8a2]">
-                              {vocabRows.length} thẻ từ vựng •{" "}
-                              {listeningRows.length} câu hội thoại •{" "}
-                              {activeDurationLabel}
+                              {vocabRows.length} thẻ từ vựng · {listeningRows.length} câu hội thoại · {activeDurationLabel}
                             </p>
                           </div>
                         </div>
@@ -1557,15 +1637,11 @@ export default function AdminContentScreen() {
                             status={draftWorkflow.autoSaveStatus}
                           />
                           {draftWorkflow.draft.status === "PUBLISHED" ? (
-                            <span className="rounded-full bg-[#d7f0e5] border border-(--vv-accent-strong) px-3 py-2 text-[11px] font-semibold text-[#2f5d50]">
+                            <span className="rounded-full bg-[#e2e8e5] px-4 py-2 text-[11px] font-semibold text-[#4f5d57]">
                               Đã xuất bản
                             </span>
-                          ) : draftWorkflow.draft.publishedAt ? (
-                            <span className="rounded-full border border-[#f4b24f] bg-[#fdf6e3] px-3 py-2 text-[11px] font-semibold text-[#b4771e]">
-                              Nháp
-                            </span>
                           ) : (
-                            <span className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#b4771e] border border-[#f4b24f] bg-[#fdf6e3]">
+                            <span className="rounded-full bg-[#fdf6e3] border border-[#f4b24f]/30 px-4 py-2 text-[11px] font-semibold text-[#b4771e]">
                               Nháp
                             </span>
                           )}
@@ -1574,8 +1650,8 @@ export default function AdminContentScreen() {
                             type="button"
                             onClick={handlePublishActiveUnit}
                             disabled={draftWorkflow.isPublishing}
-                            className={`rounded-full px-4 py-2 text-[11px] font-semibold flex items-center gap-2 
-                                bg-[#2f5d50] text-white disabled:opacity-60
+                            className={`rounded-full px-4 py-2 text-[11px] font-semibold flex items-center gap-1.5 
+                                bg-[#2f5d50] hover:bg-[#23483e] transition-colors text-white disabled:opacity-60
                             `}
                           >
                             <EyeIcon className="h-4 w-4" />
@@ -1587,90 +1663,6 @@ export default function AdminContentScreen() {
                           </button>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="border-b border-[#eef2ee] bg-[#fafcfb] px-8 py-4">
-                      <p className="text-xs font-semibold text-[#2f5d50]">
-                        Cau truc noi dung: Dia diem -&gt; Tinh huong -&gt; Bai hoc (Learning Unit)
-                      </p>
-                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                        <label className="flex flex-col gap-1 text-xs text-[#7b8b83]">
-                          Chon bai hoc da co
-                          <select
-                            value={selectedLearningUnitId}
-                            onChange={(e) => {
-                              const nextId = e.target.value;
-                              setSelectedLearningUnitId(nextId);
-                              const selectedUnitOption = learningUnitOptions.find(
-                                (unit) => unit.id === nextId,
-                              );
-                              if (selectedUnitOption) {
-                                setSelectedLevelId(
-                                  selectedUnitOption.levelId ||
-                                    selectedUnitOption.level?.id ||
-                                    "",
-                                );
-                                setLearningUnitTitleInput(
-                                  selectedUnitOption.titleVi ||
-                                    selectedUnitOption.titleJa ||
-                                    "",
-                                );
-                                setIsCreateLearningUnitMode(false);
-                              }
-                            }}
-                            className="h-10 rounded-xl border border-[#e6ece6] bg-white px-3 text-sm text-[#1f2b27]"
-                          >
-                            <option value="">Tao bai hoc moi</option>
-                            {learningUnitOptions.map((unit) => (
-                              <option key={unit.id} value={unit.id}>
-                                {(unit.titleVi || unit.titleJa || "Bai hoc") +
-                                  (unit.level?.code ? ` (${unit.level.code})` : "")}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1 text-xs text-[#7b8b83]">
-                          Level
-                          <select
-                            value={selectedLevelId}
-                            onChange={(e) => {
-                              setSelectedLevelId(e.target.value);
-                              if (selectedLearningUnitId) {
-                                setSelectedLearningUnitId("");
-                                setIsCreateLearningUnitMode(true);
-                              }
-                            }}
-                            className="h-10 rounded-xl border border-[#e6ece6] bg-white px-3 text-sm text-[#1f2b27]"
-                          >
-                            <option value="">Chon level</option>
-                            {levels.map((level) => (
-                              <option key={level.id} value={level.id}>
-                                {level.code || level.nameVi || level.nameJa || level.id}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1 text-xs text-[#7b8b83]">
-                          Ten bai hoc
-                          <input
-                            value={learningUnitTitleInput}
-                            onChange={(e) => {
-                              setLearningUnitTitleInput(e.target.value);
-                              if (selectedLearningUnitId) {
-                                setSelectedLearningUnitId("");
-                                setIsCreateLearningUnitMode(true);
-                              }
-                            }}
-                            placeholder="VD: Thanh toan tai sieu thi"
-                            className="h-10 rounded-xl border border-[#e6ece6] bg-white px-3 text-sm text-[#1f2b27]"
-                          />
-                        </label>
-                      </div>
-                      <p className="mt-2 text-[11px] text-[#7b8b83]">
-                        {!isCreateLearningUnitMode && selectedLearningUnitId
-                          ? "Dang su dung LearningUnit da co. Publish se dung learningUnitId nay."
-                          : "Dang o che do tao moi. Publish se tao LearningUnit moi theo level + ten bai hoc."}
-                      </p>
                     </div>
 
                     <div className=" flex items-center gap-4 border-b px-8 pt-4 border-[#eef2ee] text-sm font-semibold">
@@ -1710,7 +1702,7 @@ export default function AdminContentScreen() {
                               <button
                                 type="button"
                                 onClick={() => setIsVocabImportOpen(true)}
-                                className="rounded-full border border-[#dfe6df] px-3 py-1 text-[11px] font-semibold text-[#7b8b83]"
+                                className="rounded-full bg-[#e2e8e5] px-4 py-1.5 text-[11px] font-bold text-[#4f5e58] hover:bg-[#d5deda] transition-colors"
                               >
                                 Import CSV
                               </button>
@@ -1727,7 +1719,7 @@ export default function AdminContentScreen() {
                                     meaning: "",
                                   });
                                 }}
-                                className="rounded-full bg-[#2f5d50] px-3 py-1 text-[11px] font-semibold text-white"
+                                className="rounded-full bg-[#2f5d50] px-4 py-1.5 text-[11px] font-bold text-white hover:bg-[#23483e] transition-colors"
                               >
                                 + Thêm thẻ
                               </button>
@@ -1747,16 +1739,16 @@ export default function AdminContentScreen() {
                           ) : (
                             <div className="mt-3 overflow-hidden rounded-2xl border border-[#eef2ee]">
                               <table className="w-full text-left text-[11px]">
-                                <thead className="bg-[#f8faf7] text-[#7b8b83]">
+                                <thead className="bg-[#f8faf7] text-[#7b8b83] font-semibold uppercase tracking-wider">
                                   <tr>
                                     <th className="px-4 py-3">#</th>
-                                    <th className="px-4 py-3">Từ / cụm từ</th>
-                                    <th className="px-4 py-3">Loại</th>
+                                    <th className="px-4 py-3">TỪ / CỤM TỪ</th>
+                                    <th className="px-4 py-3">LOẠI</th>
                                     <th className="px-4 py-3">
-                                      Nghĩa tiếng Nhật
+                                      NGHĨA TIẾNG NHẬT
                                     </th>
                                     <th className="px-4 py-3">
-                                      Ví dụ câu (Việt)
+                                      VÍ DỤ CÂU (VIỆT)
                                     </th>
                                     <th className="px-4 py-3"></th>
                                   </tr>
@@ -1768,7 +1760,7 @@ export default function AdminContentScreen() {
                                       className="border-t border-[#eef2ee]"
                                     >
                                       <td className="px-4 py-3">{row.index}</td>
-                                      <td className="px-4 py-3 font-semibold">
+                                      <td className="px-4 py-3 font-semibold text-[#1f2b27]">
                                         {row.term}
                                       </td>
                                       <td className="px-4 py-3">
@@ -1779,13 +1771,14 @@ export default function AdminContentScreen() {
                                       <td className="px-4 py-3">
                                         {row.meaning}
                                       </td>
-                                      <td className="px-4 py-3">
-                                        {row.example}
+                                      <td className="px-4 py-3 text-[#5c6962] italic font-normal">
+                                        {row.example ? `"${row.example.replace(/^"|"$/g, "")}"` : ""}
                                       </td>
                                       <td className="px-4 py-3">
-                                        <div className="flex items-center gap-2">
-                                          <IconButton
-                                            ariaLabel="Edit"
+                                        <div className="flex items-center gap-4">
+                                          <button
+                                            type="button"
+                                            aria-label="Sửa"
                                             onClick={() => {
                                               setVocabModal("edit");
                                               setVocabToEditIndex(row.index);
@@ -1799,17 +1792,20 @@ export default function AdminContentScreen() {
                                                 meaning: row.meaning,
                                               });
                                             }}
+                                            className="text-[#9aa8a2] hover:text-[#2f5d50] transition-colors"
                                           >
                                             <EditIcon className="h-4 w-4" />
-                                          </IconButton>
-                                          <IconButton
-                                            ariaLabel="Delete"
+                                          </button>
+                                          <button
+                                            type="button"
+                                            aria-label="Xóa"
                                             onClick={() =>
                                               setDeleteVocabIndex(row.index)
                                             }
+                                            className="text-[#d46b6b] hover:text-[#a63d3d] transition-colors"
                                           >
-                                            <TrashIcon className="h-4 w-4 text-[#d46b6b]" />
-                                          </IconButton>
+                                            <TrashIcon className="h-4 w-4" />
+                                          </button>
                                         </div>
                                       </td>
                                     </tr>
@@ -1819,11 +1815,20 @@ export default function AdminContentScreen() {
                             </div>
                           )}
 
-                          <div className="mt-3 flex items-center gap-2 text-[11px] text-[#7b8b83]">
-                            <InfoIcon className="h-4 w-4" />
+                          <div className="mt-4 flex items-center gap-2 text-[11px] text-[#7b8b83]">
+                            <svg
+                              className="h-4 w-4 text-[#2f5d50] shrink-0"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth={2}
+                            >
+                              <circle cx="12" cy="12" r="10" />
+                              <line x1="12" y1="16" x2="12" y2="12" />
+                              <line x1="12" y1="8" x2="12.01" y2="8" />
+                            </svg>
                             <span>
-                              Bấm vào để sửa thẻ — gồm cả nghĩa tiếng Nhật, ví
-                              dụ câu tiếng Việt và ghi chú (mặt sau flashcard)
+                              Bấm ✎ để sửa thẻ — gồm cả nghĩa tiếng Nhật, ví dụ câu tiếng Nhật và ghi chú (mặt sau flashcard)
                             </span>
                           </div>
                         </div>
@@ -1833,23 +1838,38 @@ export default function AdminContentScreen() {
                             <div className="flex items-center gap-3">
                               <button
                                 type="button"
+                                onClick={togglePlayAudio}
                                 className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7f0e5] text-[#2f5d50]"
+                                aria-label={isPlayingAudio ? "Pause" : "Play"}
                               >
-                                <PlayIcon className="h-4 w-4" />
+                                {isPlayingAudio ? (
+                                  <PauseIcon className="h-4 w-4" />
+                                ) : (
+                                  <PlayIcon className="h-4 w-4" />
+                                )}
                               </button>
                               <div className="flex-1">
-                                <div className="h-2 w-full rounded-full bg-[#5f7a71]">
-                                  <div className="h-full w-[65%] rounded-full bg-[#d7f0e5]" />
+                                <div 
+                                  ref={progressBarRef}
+                                  onClick={handleProgressBarClick}
+                                  className="h-4 flex items-center cursor-pointer group"
+                                >
+                                  <div className="h-2 w-full rounded-full bg-[#5f7a71] overflow-hidden">
+                                    <div 
+                                      className="h-full rounded-full bg-[#d7f0e5] transition-all duration-100" 
+                                      style={{ width: `${audioDuration > 0 ? (audioCurrentTime / audioDuration) * 100 : 0}%` }}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                               <div className="text-xs text-[#d7f0e5]">
-                                0:00 / {activeDurationLabel}{" "}
+                                {formatDuration(audioCurrentTime)} / {activeDurationLabel}{" "}
                                 <button
                                   type="button"
                                   onClick={() =>
                                     setListeningModal("replace-audio")
                                   }
-                                  className="underline"
+                                  className="underline ml-2"
                                 >
                                   Thay file
                                 </button>
@@ -2009,7 +2029,19 @@ export default function AdminContentScreen() {
                                                   }
                                                   className="h-9 w-16 rounded-xl border border-(--var-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
                                                 />
-                                                <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setEditDraft((prev) => ({
+                                                      ...prev,
+                                                      timestamp: formatDuration(audioCurrentTime),
+                                                    }))
+                                                  }
+                                                  title="Lấy timestamp hiện tại"
+                                                  className="hover:scale-110 active:scale-95 transition-transform"
+                                                >
+                                                  <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                                </button>
                                               </div>
                                             </td>
                                             <td className="px-4 py-3">
@@ -2065,7 +2097,6 @@ export default function AdminContentScreen() {
                                                 onClick={() =>
                                                   handleCopyTimestamp(
                                                     row.index,
-                                                    row.timestamp,
                                                   )
                                                 }
                                                 className="flex items-center gap-2"
@@ -2139,7 +2170,19 @@ export default function AdminContentScreen() {
                                               }
                                               className="h-9 w-16 rounded-xl border border-(--vv-accent) bg-white px-2 text-[11px] text-[#1f2b27] focus:outline-none"
                                             />
-                                            <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setNewRow((prev) => ({
+                                                  ...prev,
+                                                  timestamp: formatDuration(audioCurrentTime),
+                                                }))
+                                              }
+                                              title="Lấy timestamp hiện tại"
+                                              className="hover:scale-110 active:scale-95 transition-transform"
+                                            >
+                                              <ClockIcon className="h-3.5 w-3.5 text-[#7b8b83]" />
+                                            </button>
                                           </div>
                                         </td>
                                         <td className="px-4 py-3">
@@ -3292,13 +3335,13 @@ function LegendDot({ color }: { color: string }) {
 function getTagClass(type: string) {
   switch (type) {
     case "từ lóng":
-      return "rounded-full bg-(--vv-red) px-2 py-1 text-[10px]  text-white";
+      return "rounded-full bg-[#9f3d3a] px-2.5 py-0.5 text-[10px] text-white font-semibold";
     case "thành ngữ":
-      return "rounded-full bg-(--vv-accent-strong) px-2 py-1 text-[10px] text-white";
+      return "rounded-full bg-[#2f5d50] px-2.5 py-0.5 text-[10px] text-white font-semibold";
     case "từ chuyên ngành":
-      return "rounded-full bg-[#dff2ea] px-2 py-1 text-[10px]  text-black ";
+      return "rounded-full bg-[#d2ede2] px-2.5 py-0.5 text-[10px] text-[#2f5d50] font-semibold";
     default:
-      return "rounded-full bg-[#eef2ee] px-2 py-1 text-[10px]  ";
+      return "rounded-full bg-[#eef2ee] px-2.5 py-0.5 text-[10px] font-semibold";
   }
 }
 
@@ -3778,4 +3821,34 @@ function SaveIcon({ className }: { className?: string }) {
   );
 }
 
+function GearIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
 
+function PauseIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="6" y="4" width="4" height="16" />
+      <rect x="14" y="4" width="4" height="16" />
+    </svg>
+  );
+}

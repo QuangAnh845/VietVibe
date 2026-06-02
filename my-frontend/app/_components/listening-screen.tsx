@@ -27,6 +27,7 @@ type ListeningLesson = {
   audioUrl: string;
   durationSeconds: number;
   description?: string | null;
+  ambientSoundIds?: string[];
   transcriptLines: TranscriptLine[];
 };
 
@@ -81,6 +82,8 @@ type ApiListeningLesson = {
   duration_seconds?: number;
   durationSeconds?: number;
   description?: string | null;
+  ambient_sound_ids?: string[];
+  ambientSoundIds?: string[];
   transcriptLines?: unknown[];
 };
 
@@ -253,15 +256,26 @@ export default function ListeningScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [ambientOptions, setAmbientOptions] = useState<
+  const [allAmbientOptions, setAllAmbientOptions] = useState<
     EnvironmentSoundOption[]
   >(defaultAmbientOptions);
+
+  const ambientOptions = useMemo(() => {
+    if (!lesson) {
+      return allAmbientOptions;
+    }
+    const allowedIds = lesson.ambientSoundIds || [];
+    return allAmbientOptions.filter(
+      (opt) => opt.id === "off" || allowedIds.includes(opt.id)
+    );
+  }, [allAmbientOptions, lesson]);
   const [lineAudioUrls, setLineAudioUrls] = useState<Record<string, string>>(
     {},
   );
   const [lineDurations, setLineDurations] = useState<Record<string, number>>(
     {},
   );
+  const hasSplitLines = useMemo(() => lines.some((line) => !!lineAudioUrls[line.id]), [lines, lineAudioUrls]);
   const [vocabIndex, setVocabIndex] = useState(0);
   const [vocabFlipped, setVocabFlipped] = useState(false);
   const [, setVocabFlippedCardIds] = useState<Set<string>>(() => new Set());
@@ -294,7 +308,7 @@ export default function ListeningScreen() {
               };
             });
             mapped.push({ id: "off", label: "オフ" });
-            if (mounted) setAmbientOptions(mapped);
+            if (mounted) setAllAmbientOptions(mapped);
           }
         }
       } catch (e) {
@@ -396,6 +410,7 @@ export default function ListeningScreen() {
             durationSeconds:
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
+            ambientSoundIds: (detailJson.ambient_sound_ids ?? detailJson.ambientSoundIds ?? []).map(String),
             transcriptLines: Array.isArray(detailJson.transcriptLines)
               ? detailJson.transcriptLines.map((line, index: number) => {
                   const lineItem = line as ApiTranscriptLine;
@@ -461,6 +476,7 @@ export default function ListeningScreen() {
             durationSeconds:
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
+            ambientSoundIds: (detailJson.ambient_sound_ids ?? detailJson.ambientSoundIds ?? []).map(String),
             transcriptLines: Array.isArray(detailJson.transcriptLines)
               ? detailJson.transcriptLines.map((line, index: number) => {
                   const lineItem = line as ApiTranscriptLine;
@@ -690,9 +706,9 @@ export default function ListeningScreen() {
     ? lines.reduce((total, line) => total + getLineDuration(line), 0)
     : 0;
 
-  const totalAudioDuration = calculatedDuration > 0
-    ? calculatedDuration
-    : (lesson?.durationSeconds ?? 0);
+  const totalAudioDuration = !hasSplitLines && lesson?.durationSeconds
+    ? lesson.durationSeconds
+    : (calculatedDuration > 0 ? calculatedDuration : 0);
 
   const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
 
@@ -707,6 +723,17 @@ export default function ListeningScreen() {
   const ambientAudioSrc = selectedAmbientOption?.audioUrl
     ? resolveAudioUrl(selectedAmbientOption.audioUrl)
     : "";
+
+  // If the currently selected ambient sound is not allowed in the loaded lesson, reset it to off
+  useEffect(() => {
+    if (lesson && ambientSound !== "off") {
+      const allowedIds = lesson.ambientSoundIds || [];
+      if (!allowedIds.includes(ambientSound)) {
+        setAmbientSound("off");
+        setTempAmbientSound("off");
+      }
+    }
+  }, [lesson, ambientSound]);
 
   // Synchronize ambient sound with main player state, volume, and selection
   useEffect(() => {
@@ -892,7 +919,7 @@ export default function ListeningScreen() {
     currentIndexRef.current = index;
     const startTime = getAudioStartForLine(targetLine);
     setCurrentIndex(index);
-    setCurrentTime(getDisplayTimeForLine(index, startTime));
+    setCurrentTime(hasSplitLines ? getDisplayTimeForLine(index, startTime) : startTime);
 
     if (autoPlay) {
       await waitForNextFrame();
@@ -938,7 +965,7 @@ export default function ListeningScreen() {
           }
 
           audio.currentTime = lineStart;
-          setCurrentTime(getDisplayTimeForLine(currentIndex, lineStart));
+          setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, lineStart) : lineStart);
         }
       }
 
@@ -1013,13 +1040,13 @@ export default function ListeningScreen() {
         if (playMode === "study" || lineAudioUrls[currentLine.id]) {
           audio.pause();
           audio.currentTime = lineEnd;
-          setCurrentTime(getDisplayTimeForLine(currentIndex, lineEnd));
+          setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, lineEnd) : lineEnd);
           setIsPlaying(false);
           return;
         }
       }
 
-      setCurrentTime(getDisplayTimeForLine(currentIndex, time));
+      setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, time) : time);
 
       if (playMode === "study" || lineAudioUrls[currentLine.id]) {
         return;
@@ -1032,7 +1059,7 @@ export default function ListeningScreen() {
         currentIndexRef.current = activeLineIndex;
         setCurrentIndex(activeLineIndex);
       }
-      setCurrentTime(getDisplayTimeForLine(activeLineIndex, time));
+      setCurrentTime(hasSplitLines ? getDisplayTimeForLine(activeLineIndex, time) : time);
     }
   };
 
