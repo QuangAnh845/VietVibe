@@ -86,6 +86,25 @@ const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
 
 // Map places to icon names
 const placeIconMap: Record<string, IconName> = {
+  // Vietnamese place name mappings
+  "siêu-thị": "cart",
+  "nhà-hàng": "restaurant",
+  "bệnh-viện": "hospital",
+  "bến-xe": "bus",
+  "tiệm-làm-đẹp": "salon",
+  "ngân-hàng": "bank",
+  "taxi": "taxi",
+
+  // Japanese place name mappings
+  "スーパー": "cart",
+  "レストラン": "restaurant",
+  "病院": "hospital",
+  "バス": "bus",
+  "美容室": "salon",
+  "銀行": "bank",
+  "タクシー": "taxi",
+
+  // English fallback mappings
   super: "cart",
   supermarket: "cart",
   restaurant: "restaurant",
@@ -93,7 +112,6 @@ const placeIconMap: Record<string, IconName> = {
   bus: "bus",
   salon: "salon",
   bank: "bank",
-  taxi: "taxi",
 };
 
 export default function HomeScreen() {
@@ -233,13 +251,14 @@ export default function HomeScreen() {
 
         // Build minimal sections with empty tasks for now
         const nextSections: Section[] = places.map((place) => {
-          const placeKey = place.nameVi.toLowerCase().replace(/\s+/g, "-");
+          const placeKeyVi = place.nameVi.toLowerCase().replace(/\s+/g, "-");
+          const placeKeyJa = place.nameJa.toLowerCase();
           const icon: IconName = Object.keys(placeIconMap).some((key) =>
-            placeKey.includes(key),
+            placeKeyVi.includes(key) || placeKeyJa.includes(key),
           )
             ? placeIconMap[
                 Object.keys(placeIconMap).find((key) =>
-                  placeKey.includes(key),
+                  placeKeyVi.includes(key) || placeKeyJa.includes(key),
                 ) as string
               ]
             : "cart";
