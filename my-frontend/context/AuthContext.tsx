@@ -18,6 +18,7 @@ interface User {
   user_name?: string;
   name?: string;
   role: string;
+  avatar_url?: string | null;
 }
 
 interface AuthContextType {

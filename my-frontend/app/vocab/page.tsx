@@ -1,12 +1,14 @@
 import { Suspense } from "react";
-_;
+import StudyScreen from "../_components/study-screen";
 
 import { ProtectedRoute } from "../components/ProtectedRoute";
 
 export default function VocabPage() {
   return (
     <ProtectedRoute>
-      <Suspense fallback={null}></Suspense>
+      <Suspense fallback={null}>
+        <StudyScreen />
+      </Suspense>
     </ProtectedRoute>
   );
 }

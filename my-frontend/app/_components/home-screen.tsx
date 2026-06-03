@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 type Task = {
   id: string;
@@ -97,6 +98,18 @@ const placeIconMap: Record<string, IconName> = {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+
+  const initials = useMemo(() => {
+    const name = user?.user_name || user?.name || "User";
+    return name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("");
+  }, [user]);
+
   const [sections, setSections] = useState<Section[]>([]);
   const [openIds, setOpenIds] = useState<string[]>([]);
   const [loadingPlaceIds, setLoadingPlaceIds] = useState<string[]>([]);
@@ -600,9 +613,22 @@ export default function HomeScreen() {
             <button
               type="button"
               onClick={() => router.push("/profile")}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-(--vv-accent) text-sm font-semibold text-white shadow-sm ring-1 ring-(--vv-ring)"
+              className="flex h-10 w-10 items-center justify-center rounded-full overflow-hidden shadow-sm ring-1 ring-(--vv-ring) bg-(--vv-accent)"
             >
-              TH
+              {user?.avatar_url ? (
+                <img
+                  src={`${API_BASE_URL}${user.avatar_url}`}
+                  alt="Avatar"
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <span className="text-sm font-semibold text-white">
+                  {initials || "VV"}
+                </span>
+              )}
             </button>
           </div>
         </header>
