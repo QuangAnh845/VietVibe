@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 
 type PlayMode = "study" | "continuous";
 type AmbientSound = string;
@@ -223,6 +223,7 @@ async function fetchVocabCards(learningUnitId?: string): Promise<VocabCard[]> {
 
 export default function ListeningScreen() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const learningUnitId = searchParams.get("learningUnitId");
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -246,7 +247,8 @@ export default function ListeningScreen() {
   const [ambientSound, setAmbientSound] = useState<AmbientSound>("cafe");
   const [ambientVolume, setAmbientVolume] = useState(40);
 
-  const [activeTab, setActiveTab] = useState<"vocab" | "listen">("listen");
+  const defaultTab = pathname?.includes("vocab") ? "vocab" : "listen";
+  const [activeTab, setActiveTab] = useState<"vocab" | "listen">(defaultTab);
 
   const [currentIndex, setCurrentIndex] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -286,6 +288,12 @@ export default function ListeningScreen() {
   useEffect(() => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
+
+  useEffect(() => {
+    if (pathname) {
+      setActiveTab(pathname.includes("vocab") ? "vocab" : "listen");
+    }
+  }, [pathname]);
 
   // Load settings from API or localStorage on mount
   useEffect(() => {
