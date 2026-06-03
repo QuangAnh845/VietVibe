@@ -217,61 +217,7 @@ export class UsersService {
       { upsert: true },
     );
 
-    // After updating, return a per-unit summary (vocab list + viewed status, listening progress)
-    const userObjectId = this.toObjectId(userId);
-    const learningUnitObjectId = this.toObjectId(learningUnitId);
-
-    const progress = await UserProgress.findOne({
-      user_id: userObjectId,
-      learning_unit_id: learningUnitObjectId,
-    }).exec();
-
-    // Fetch vocabulary cards for this unit and mark viewed status
-    const vocabularyCards = await VocabularyCard.find({
-      learning_unit_id: learningUnitObjectId,
-    })
-      .select('word_vi meaning_ja')
-      .sort({ created_at: 1 })
-      .exec();
-
-    const viewedIds = new Set(
-      (progress?.vocabulary_progress?.viewed_card_ids || []).map(String),
-    );
-
-    const cards = vocabularyCards.map((c: any) => ({
-      id: String(c._id),
-      word_vi: c.word_vi,
-      meaning_ja: c.meaning_ja,
-      viewed: viewedIds.has(String(c._id)),
-    }));
-
-    const vocabTotal = vocabularyCards.length;
-    const viewedCount = cards.filter((c) => c.viewed).length;
-    const vocabCompleted = Boolean(progress?.vocabulary_progress?.completed);
-    const vocabCompletedAt = progress?.vocabulary_progress?.completed_at ?? null;
-
-    const listening = progress?.listening_progress || {};
-
-    return {
-      success: true,
-      data: {
-        learningUnitId,
-        vocabulary: {
-          totalCards: vocabTotal,
-          viewedCardIds: progress?.vocabulary_progress?.viewed_card_ids || [],
-          viewedCardCount: viewedCount,
-          completed: vocabCompleted,
-          completedAt: vocabCompletedAt,
-          cards,
-        },
-        listening: {
-          lessonId: listening?.lesson_id ?? null,
-          lastPositionSeconds: listening?.last_position_seconds ?? 0,
-          completed: Boolean(listening?.completed),
-          completedAt: listening?.completed_at ?? null,
-        },
-      },
-    };
+    return this.getOverallProgress(userId);
   }
 
   async markVocabularyCardViewed(
