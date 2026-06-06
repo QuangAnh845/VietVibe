@@ -1,12 +1,13 @@
 import { Suspense } from "react";
-import VocabScreen from "../_components/vocab-screen";
+import StudyScreen from "../_components/study-screen";
+
 import { ProtectedRoute } from "../components/ProtectedRoute";
 
 export default function VocabPage() {
   return (
     <ProtectedRoute>
       <Suspense fallback={null}>
-        <VocabScreen />
+        <StudyScreen />
       </Suspense>
     </ProtectedRoute>
   );

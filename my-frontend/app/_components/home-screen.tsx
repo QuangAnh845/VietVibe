@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 type Task = {
   id: string;
@@ -85,6 +86,25 @@ const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
 
 // Map places to icon names
 const placeIconMap: Record<string, IconName> = {
+  // Vietnamese place name mappings
+  "siêu-thị": "cart",
+  "nhà-hàng": "restaurant",
+  "bệnh-viện": "hospital",
+  "bến-xe": "bus",
+  "tiệm-làm-đẹp": "salon",
+  "ngân-hàng": "bank",
+  "taxi": "taxi",
+
+  // Japanese place name mappings
+  "スーパー": "cart",
+  "レストラン": "restaurant",
+  "病院": "hospital",
+  "バス": "bus",
+  "美容室": "salon",
+  "銀行": "bank",
+  "タクシー": "taxi",
+
+  // English fallback mappings
   super: "cart",
   supermarket: "cart",
   restaurant: "restaurant",
@@ -92,11 +112,22 @@ const placeIconMap: Record<string, IconName> = {
   bus: "bus",
   salon: "salon",
   bank: "bank",
-  taxi: "taxi",
 };
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+
+  const initials = useMemo(() => {
+    const name = user?.user_name || user?.name || "User";
+    return name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("");
+  }, [user]);
+
   const [sections, setSections] = useState<Section[]>([]);
   const [openIds, setOpenIds] = useState<string[]>([]);
   const [loadingPlaceIds, setLoadingPlaceIds] = useState<string[]>([]);
@@ -220,13 +251,14 @@ export default function HomeScreen() {
 
         // Build minimal sections with empty tasks for now
         const nextSections: Section[] = places.map((place) => {
-          const placeKey = place.nameVi.toLowerCase().replace(/\s+/g, "-");
+          const placeKeyVi = place.nameVi.toLowerCase().replace(/\s+/g, "-");
+          const placeKeyJa = place.nameJa.toLowerCase();
           const icon: IconName = Object.keys(placeIconMap).some((key) =>
-            placeKey.includes(key),
+            placeKeyVi.includes(key) || placeKeyJa.includes(key),
           )
             ? placeIconMap[
                 Object.keys(placeIconMap).find((key) =>
-                  placeKey.includes(key),
+                  placeKeyVi.includes(key) || placeKeyJa.includes(key),
                 ) as string
               ]
             : "cart";
@@ -600,9 +632,22 @@ export default function HomeScreen() {
             <button
               type="button"
               onClick={() => router.push("/profile")}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-(--vv-accent) text-sm font-semibold text-white shadow-sm ring-1 ring-(--vv-ring)"
+              className="flex h-10 w-10 items-center justify-center rounded-full overflow-hidden shadow-sm ring-1 ring-(--vv-ring) bg-(--vv-accent)"
             >
-              TH
+              {user?.avatar_url ? (
+                <img
+                  src={`${API_BASE_URL}${user.avatar_url}`}
+                  alt="Avatar"
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <span className="text-sm font-semibold text-white">
+                  {initials || "VV"}
+                </span>
+              )}
             </button>
           </div>
         </header>

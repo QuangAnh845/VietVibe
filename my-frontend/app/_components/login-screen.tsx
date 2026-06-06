@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 
 type AuthMode = "login" | "register";
@@ -31,6 +31,11 @@ export default function LoginScreen() {
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
   const [forgotPasswordError, setForgotPasswordError] = useState(false);
+
+  useEffect(() => {
+    setMessage("");
+    setIsError(false);
+  }, [mode]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -294,7 +299,11 @@ export default function LoginScreen() {
                   onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-(--vv-muted)"
                 >
-                  <EyeIcon className="h-5 w-5" />
+                  {showPassword ? (
+                    <EyeIcon className="h-5 w-5" />
+                  ) : (
+                    <EyeOffIcon className="h-5 w-5" />
+                  )}
                 </button>
               </div>
             </label>
@@ -315,7 +324,11 @@ export default function LoginScreen() {
                     onClick={() => setShowConfirmPassword((prev) => !prev)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-(--vv-muted)"
                   >
-                    <EyeIcon className="h-5 w-5" />
+                    {showConfirmPassword ? (
+                      <EyeIcon className="h-5 w-5" />
+                    ) : (
+                      <EyeOffIcon className="h-5 w-5" />
+                    )}
                   </button>
                 </div>
               </label>
@@ -392,6 +405,26 @@ function EyeIcon({ className }: { className?: string }) {
     >
       <path d="M1.5 12s4.5-7.5 10.5-7.5S22.5 12 22.5 12s-4.5 7.5-10.5 7.5S1.5 12 1.5 12z" />
       <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M17.94 17.94A10.87 10.87 0 0 1 12 20C5 20 1 12 1 12a21.77 21.77 0 0 1 5.06-7.94" />
+      <path d="M9.9 4.24A10.96 10.96 0 0 1 12 4c7 0 11 8 11 8a22.78 22.78 0 0 1-2.16 3.19" />
+      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
   );
 }

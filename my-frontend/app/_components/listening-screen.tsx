@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 
 type PlayMode = "study" | "continuous";
 type AmbientSound = string;
@@ -27,6 +27,7 @@ type ListeningLesson = {
   audioUrl: string;
   durationSeconds: number;
   description?: string | null;
+  ambientSoundIds?: string[];
   transcriptLines: TranscriptLine[];
 };
 
@@ -81,6 +82,8 @@ type ApiListeningLesson = {
   duration_seconds?: number;
   durationSeconds?: number;
   description?: string | null;
+  ambient_sound_ids?: string[];
+  ambientSoundIds?: string[];
   transcriptLines?: unknown[];
 };
 
@@ -111,11 +114,39 @@ const defaultAmbientOptions: EnvironmentSoundOption[] = [
 ];
 
 const SETTINGS_STORAGE_KEY = "vv-listening-settings";
-const PROGRESS_STORAGE_KEY = "vv-task-progress";
-const LAST_SELECTION_STORAGE_KEY = "vv-last-selection";
-const PROGRESS_EVENT = "vv-progress-updated";
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+const updateProgressOnBackend = async (
+  taskId: string,
+  field: "vocab" | "listen",
+) => {
+  if (typeof window === "undefined") return;
+
+  let authData: { accessToken?: string } | null = null;
+  try {
+    authData = JSON.parse(localStorage.getItem("vietvibe_auth") || "{}");
+  } catch {
+    authData = null;
+  }
+
+  const accessToken =
+    localStorage.getItem("auth_token") || authData?.accessToken;
+  if (!accessToken) return;
+
+  try {
+    await fetch(`${BACKEND_URL}/users/me/progress/learning-units/${taskId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ field, completed: true }),
+    });
+  } catch (error) {
+    console.error(`Failed to persist ${field} completion to API`, error);
+  }
+};
 
 const getApiErrorMessage = (payload: unknown) => {
   if (!payload || typeof payload !== "object") return undefined;
@@ -192,6 +223,7 @@ async function fetchVocabCards(learningUnitId?: string): Promise<VocabCard[]> {
 
 export default function ListeningScreen() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const learningUnitId = searchParams.get("learningUnitId");
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -215,7 +247,8 @@ export default function ListeningScreen() {
   const [ambientSound, setAmbientSound] = useState<AmbientSound>("cafe");
   const [ambientVolume, setAmbientVolume] = useState(40);
 
-  const [activeTab, setActiveTab] = useState<"vocab" | "listen">("listen");
+  const defaultTab = pathname?.includes("vocab") ? "vocab" : "listen";
+  const [activeTab, setActiveTab] = useState<"vocab" | "listen">(defaultTab);
 
   const [currentIndex, setCurrentIndex] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -225,22 +258,29 @@ export default function ListeningScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [ambientOptions, setAmbientOptions] = useState<
+  const [allAmbientOptions, setAllAmbientOptions] = useState<
     EnvironmentSoundOption[]
   >(defaultAmbientOptions);
+
+  const ambientOptions = useMemo(() => {
+    if (!lesson) {
+      return allAmbientOptions;
+    }
+    const allowedIds = lesson.ambientSoundIds || [];
+    return allAmbientOptions.filter(
+      (opt) => opt.id === "off" || allowedIds.includes(opt.id)
+    );
+  }, [allAmbientOptions, lesson]);
   const [lineAudioUrls, setLineAudioUrls] = useState<Record<string, string>>(
     {},
   );
   const [lineDurations, setLineDurations] = useState<Record<string, number>>(
     {},
   );
+  const hasSplitLines = useMemo(() => lines.some((line) => !!lineAudioUrls[line.id]), [lines, lineAudioUrls]);
   const [vocabIndex, setVocabIndex] = useState(0);
   const [vocabFlipped, setVocabFlipped] = useState(false);
-  const [vocabFlippedCardIds, setVocabFlippedCardIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [hasMarkedVocabCompletion, setHasMarkedVocabCompletion] =
-    useState(false);
+  const [, setVocabFlippedCardIds] = useState<Set<string>>(() => new Set());
   const [vocabCards, setVocabCards] = useState<VocabCard[]>([]);
   const [vocabLoading, setVocabLoading] = useState(true);
   const [vocabError, setVocabError] = useState<string | null>(null);
@@ -248,6 +288,12 @@ export default function ListeningScreen() {
   useEffect(() => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
+
+  useEffect(() => {
+    if (pathname) {
+      setActiveTab(pathname.includes("vocab") ? "vocab" : "listen");
+    }
+  }, [pathname]);
 
   // Load settings from API or localStorage on mount
   useEffect(() => {
@@ -270,7 +316,7 @@ export default function ListeningScreen() {
               };
             });
             mapped.push({ id: "off", label: "オフ" });
-            if (mounted) setAmbientOptions(mapped);
+            if (mounted) setAllAmbientOptions(mapped);
           }
         }
       } catch (e) {
@@ -372,6 +418,7 @@ export default function ListeningScreen() {
             durationSeconds:
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
+            ambientSoundIds: (detailJson.ambient_sound_ids ?? detailJson.ambientSoundIds ?? []).map(String),
             transcriptLines: Array.isArray(detailJson.transcriptLines)
               ? detailJson.transcriptLines.map((line, index: number) => {
                   const lineItem = line as ApiTranscriptLine;
@@ -437,6 +484,7 @@ export default function ListeningScreen() {
             durationSeconds:
               detailJson.duration_seconds ?? detailJson.durationSeconds ?? 0,
             description: detailJson.description ?? null,
+            ambientSoundIds: (detailJson.ambient_sound_ids ?? detailJson.ambientSoundIds ?? []).map(String),
             transcriptLines: Array.isArray(detailJson.transcriptLines)
               ? detailJson.transcriptLines.map((line, index: number) => {
                   const lineItem = line as ApiTranscriptLine;
@@ -591,30 +639,29 @@ export default function ListeningScreen() {
     ({ id: "", term: "", meaning: "", example: "" } as VocabCard);
   const isLastVocabCard =
     vocabCards.length > 0 && vocabIndex >= vocabCards.length - 1;
-  const hasFlippedAllVocab =
-    vocabCards.length > 0 && vocabFlippedCardIds.size >= vocabCards.length;
 
-  const updateLastSelectionMode = (mode: "vocab" | "listen") => {
-    if (typeof window === "undefined") return;
+  const vocabTagSummary = useMemo(() => {
+    const tags = Array.from(
+      new Set(
+        vocabCards
+          .map((card) => card.tag?.trim())
+          .filter((tag): tag is string => Boolean(tag)),
+      ),
+    );
 
-    try {
-      const raw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!raw) return;
+    if (tags.length === 0) return "";
 
-      const parsed = JSON.parse(raw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
+    const preview = tags.slice(0, 3).join("、");
+    return tags.length > 3 ? `${preview}、...` : preview;
+  }, [vocabCards]);
 
-      localStorage.setItem(
-        LAST_SELECTION_STORAGE_KEY,
-        JSON.stringify({ ...parsed, mode }),
-      );
-    } catch {
-      // Ignore parsing errors
-    }
-  };
+  const headerTitle = activeTab === "vocab" ? "語彙" : "聞き取り";
+  const headerSubtitle =
+    activeTab === "vocab"
+      ? `${vocabCards.length}カード${vocabTagSummary ? ` · ${vocabTagSummary}` : ""}`
+      : "会話";
+  const headerEyebrow =
+    lesson?.titleJa ?? "スーパー / レジで支払う";
 
   const resolveAudioUrl = useCallback((audioUrl: string) => {
     if (!audioUrl) return "";
@@ -630,7 +677,10 @@ export default function ListeningScreen() {
       const textVariants = Array.from(
         new Set([
           line.textVi.trim(),
-          line.textVi.trim().replace(/[.!?。！？…]+$/u, "").trim(),
+          line.textVi
+            .trim()
+            .replace(/[.!?。！？…]+$/u, "")
+            .trim(),
         ]),
       ).filter(Boolean);
       const folderIds = [lesson?.learningUnitId, lesson?.id].filter(Boolean);
@@ -660,9 +710,13 @@ export default function ListeningScreen() {
       .slice(0, index)
       .reduce((total, line) => total + getLineDuration(line), 0);
 
-  const totalAudioDuration = lines.length
+  const calculatedDuration = lines.length
     ? lines.reduce((total, line) => total + getLineDuration(line), 0)
-    : (lesson?.durationSeconds ?? 0);
+    : 0;
+
+  const totalAudioDuration = !hasSplitLines && lesson?.durationSeconds
+    ? lesson.durationSeconds
+    : (calculatedDuration > 0 ? calculatedDuration : 0);
 
   const currentLineAudioUrl = currentLine ? lineAudioUrls[currentLine.id] : "";
 
@@ -677,6 +731,17 @@ export default function ListeningScreen() {
   const ambientAudioSrc = selectedAmbientOption?.audioUrl
     ? resolveAudioUrl(selectedAmbientOption.audioUrl)
     : "";
+
+  // If the currently selected ambient sound is not allowed in the loaded lesson, reset it to off
+  useEffect(() => {
+    if (lesson && ambientSound !== "off") {
+      const allowedIds = lesson.ambientSoundIds || [];
+      if (!allowedIds.includes(ambientSound)) {
+        setAmbientSound("off");
+        setTempAmbientSound("off");
+      }
+    }
+  }, [lesson, ambientSound]);
 
   // Synchronize ambient sound with main player state, volume, and selection
   useEffect(() => {
@@ -862,7 +927,7 @@ export default function ListeningScreen() {
     currentIndexRef.current = index;
     const startTime = getAudioStartForLine(targetLine);
     setCurrentIndex(index);
-    setCurrentTime(getDisplayTimeForLine(index, startTime));
+    setCurrentTime(hasSplitLines ? getDisplayTimeForLine(index, startTime) : startTime);
 
     if (autoPlay) {
       await waitForNextFrame();
@@ -908,7 +973,7 @@ export default function ListeningScreen() {
           }
 
           audio.currentTime = lineStart;
-          setCurrentTime(getDisplayTimeForLine(currentIndex, lineStart));
+          setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, lineStart) : lineStart);
         }
       }
 
@@ -932,6 +997,12 @@ export default function ListeningScreen() {
     if (!audio) return;
 
     const time = audio.currentTime;
+
+    if (lines.length === 0 || calculatedDuration === 0) {
+      setCurrentTime(time);
+      return;
+    }
+
     const sourceLineIndex = getLineIndexForAudioSource(audio.src);
 
     if (sourceLineIndex !== -1) {
@@ -977,13 +1048,13 @@ export default function ListeningScreen() {
         if (playMode === "study" || lineAudioUrls[currentLine.id]) {
           audio.pause();
           audio.currentTime = lineEnd;
-          setCurrentTime(getDisplayTimeForLine(currentIndex, lineEnd));
+          setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, lineEnd) : lineEnd);
           setIsPlaying(false);
           return;
         }
       }
 
-      setCurrentTime(getDisplayTimeForLine(currentIndex, time));
+      setCurrentTime(hasSplitLines ? getDisplayTimeForLine(currentIndex, time) : time);
 
       if (playMode === "study" || lineAudioUrls[currentLine.id]) {
         return;
@@ -996,7 +1067,7 @@ export default function ListeningScreen() {
         currentIndexRef.current = activeLineIndex;
         setCurrentIndex(activeLineIndex);
       }
-      setCurrentTime(getDisplayTimeForLine(activeLineIndex, time));
+      setCurrentTime(hasSplitLines ? getDisplayTimeForLine(activeLineIndex, time) : time);
     }
   };
 
@@ -1021,7 +1092,6 @@ export default function ListeningScreen() {
       );
 
       if (sourceLineIsLast) {
-        markListeningCompletion();
         syncProgressToAPI(totalAudioDuration);
       }
 
@@ -1047,7 +1117,6 @@ export default function ListeningScreen() {
     }
 
     setIsPlaying(false);
-    markListeningCompletion();
     if (lines.length > 0) {
       currentIndexRef.current = lines.length - 1;
       setCurrentIndex(lines.length - 1);
@@ -1078,92 +1147,31 @@ export default function ListeningScreen() {
     }
   };
 
-  const markListeningCompletion = () => {
-    if (typeof window === "undefined") return;
+  const markListeningCompletion = async () => {
+    if (!lesson?.learningUnitId) return;
 
     try {
-      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!lastSelectionRaw) return;
-
-      const lastSelection = JSON.parse(lastSelectionRaw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
-
-      if (lastSelection.mode !== "listen") return;
-
-      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      const progress = stored ? JSON.parse(stored) : {};
-      if (!progress[lastSelection.sectionId]) {
-        progress[lastSelection.sectionId] = {};
-      }
-      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
-        progress[lastSelection.sectionId][lastSelection.taskId] = {};
-      }
-
-      if (progress[lastSelection.sectionId][lastSelection.taskId].listen) {
-        return;
-      }
-
-      progress[lastSelection.sectionId][lastSelection.taskId].listen = true;
-      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
-      window.dispatchEvent(new Event(PROGRESS_EVENT));
+      await updateProgressOnBackend(lesson.learningUnitId, "listen");
     } catch (error) {
       console.error("Failed to store listening completion", error);
     }
   };
 
-  const markListeningCompletionAndExit = () => {
-    markListeningCompletion();
-    syncProgressToAPI(totalAudioDuration);
+  const markListeningCompletionAndExit = async () => {
+    await markListeningCompletion();
+    await syncProgressToAPI(totalAudioDuration);
     router.push("/");
   };
 
-  const markVocabCompletion = () => {
-    if (typeof window === "undefined") return;
+  const markVocabCompletion = async () => {
+    if (!lesson?.learningUnitId) return;
 
     try {
-      const lastSelectionRaw = localStorage.getItem(LAST_SELECTION_STORAGE_KEY);
-      if (!lastSelectionRaw) return;
-
-      const lastSelection = JSON.parse(lastSelectionRaw) as {
-        sectionId: string;
-        taskId: string;
-        mode: "vocab" | "listen";
-      };
-
-      if (lastSelection.mode !== "vocab") return;
-
-      const stored = localStorage.getItem(PROGRESS_STORAGE_KEY);
-      const progress = stored ? JSON.parse(stored) : {};
-
-      if (!progress[lastSelection.sectionId]) {
-        progress[lastSelection.sectionId] = {};
-      }
-      if (!progress[lastSelection.sectionId][lastSelection.taskId]) {
-        progress[lastSelection.sectionId][lastSelection.taskId] = {};
-      }
-
-      if (progress[lastSelection.sectionId][lastSelection.taskId].vocab) {
-        setHasMarkedVocabCompletion(true);
-        return;
-      }
-
-      progress[lastSelection.sectionId][lastSelection.taskId].vocab = true;
-      localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
-      window.dispatchEvent(new Event(PROGRESS_EVENT));
-      setHasMarkedVocabCompletion(true);
+      await updateProgressOnBackend(lesson.learningUnitId, "vocab");
+      router.push("/");
     } catch (error) {
       console.error("Failed to store vocab completion", error);
     }
-  };
-
-  const markVocabCompletionAndExit = () => {
-    if (hasFlippedAllVocab) {
-      markVocabCompletion();
-    }
-    router.push("/");
   };
 
   const goPrev = () => {
@@ -1183,9 +1191,9 @@ export default function ListeningScreen() {
     setVocabFlipped(false);
   };
 
-  const goNextVocab = () => {
+  const goNextVocab = async () => {
     if (isLastVocabCard) {
-      markVocabCompletionAndExit();
+      await markVocabCompletion();
       return;
     }
     setVocabIndex((prev) => Math.min(prev + 1, vocabCards.length - 1));
@@ -1231,7 +1239,6 @@ export default function ListeningScreen() {
         setVocabIndex(0);
         setVocabFlipped(false);
         setVocabFlippedCardIds(new Set());
-        setHasMarkedVocabCompletion(false);
         setVocabLoading(false);
       })
       .catch((err: unknown) => {
@@ -1247,13 +1254,6 @@ export default function ListeningScreen() {
       mounted = false;
     };
   }, [learningUnitId]);
-
-  useEffect(() => {
-    if (!hasFlippedAllVocab || hasMarkedVocabCompletion) return;
-    queueMicrotask(() => {
-      markVocabCompletion();
-    });
-  }, [hasFlippedAllVocab, hasMarkedVocabCompletion]);
 
   return (
     <div className="min-h-screen w-full bg-linear-to-b from-[#f8f6f2] via-[#f3f7f3] to-[#ecf2ee]">
@@ -1410,13 +1410,13 @@ export default function ListeningScreen() {
 
         <div className="vv-rise-in">
           <p className="text-xs font-semibold text-(--vv-muted)">
-            {lesson?.titleVi ?? "スーパー / レジで支払う"}
+            {headerEyebrow}
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            聞き取り
+            {headerTitle}
           </h1>
           <p className="mt-1 text-xs text-(--vv-muted)">
-            {lesson?.titleJa ?? "会話"}
+            {headerSubtitle}
           </p>
         </div>
 
@@ -1424,7 +1424,6 @@ export default function ListeningScreen() {
           <button
             type="button"
             onClick={() => {
-              updateLastSelectionMode("vocab");
               setActiveTab("vocab");
             }}
             className={`pb-3 transition ${
@@ -1440,7 +1439,9 @@ export default function ListeningScreen() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("listen")}
+            onClick={() => {
+              setActiveTab("listen");
+            }}
             className={`pb-3 transition ${
               activeTab === "listen"
                 ? "relative text-(--vv-accent-strong)"
@@ -1451,53 +1452,6 @@ export default function ListeningScreen() {
             {activeTab === "listen" ? (
               <span className="absolute bottom-0 left-0 h-0.5 w-full rounded-full bg-(--vv-accent-strong)" />
             ) : null}
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 vv-rise-in vv-delay-2">
-          <button
-            type="button"
-            onClick={() => setShowJapanese((prev) => !prev)}
-            aria-pressed={showJapanese}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border)"
-          >
-            {showJapanese ? "日本語" : "日本語を隠す"}
-            <ChevronDownIcon className="h-4 w-4" />
-          </button>
-
-          {/* Speed Control Buttons */}
-          <div className="flex items-center gap-2 rounded-full bg-white ring-1 ring-(--vv-border) p-1">
-            {speeds.map((item) => {
-              const isActive = item === speed;
-              return (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => handleSpeedChange(item)}
-                  title={
-                    item === "0.75x" ? "通常より25%遅い速度" : "通常の速度"
-                  }
-                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    isActive
-                      ? "bg-(--vv-accent-strong) text-white"
-                      : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
-                  }`}
-                >
-                  {item}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Settings Button */}
-          <button
-            type="button"
-            onClick={openSettings}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
-            aria-label="Settings"
-            title="再生設定を開く"
-          >
-            <SettingsIcon className="h-5 w-5 text-(--vv-muted)" />
           </button>
         </div>
 
@@ -1545,6 +1499,52 @@ export default function ListeningScreen() {
 
         {activeTab === "listen" ? (
           <>
+            <div className="flex flex-wrap items-center gap-3 vv-rise-in vv-delay-2">
+              <button
+                type="button"
+                onClick={() => setShowJapanese((prev) => !prev)}
+                aria-pressed={showJapanese}
+                className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-(--vv-muted) ring-1 ring-(--vv-border)"
+              >
+                {showJapanese ? "日本語" : "日本語を隠す"}
+                <ChevronDownIcon className="h-4 w-4" />
+              </button>
+
+              {/* Speed Control Buttons */}
+              <div className="flex items-center gap-2 rounded-full bg-white ring-1 ring-(--vv-border) p-1">
+                {speeds.map((item) => {
+                  const isActive = item === speed;
+                  return (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => handleSpeedChange(item)}
+                      title={
+                        item === "0.75x" ? "通常より25%遅い速度" : "通常の速度"
+                      }
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        isActive
+                          ? "bg-(--vv-accent-strong) text-white"
+                          : "text-(--vv-muted) hover:text-(--vv-accent-strong)"
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Settings Button */}
+              <button
+                type="button"
+                onClick={openSettings}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-(--vv-border) transition hover:bg-(--vv-border)/20"
+                aria-label="Settings"
+                title="再生設定を開く"
+              >
+                <SettingsIcon className="h-5 w-5 text-(--vv-muted)" />
+              </button>
+            </div>
             <div className="vv-rise-in vv-delay-3">
               <div className="rounded-3xl bg-[#cfeee3] p-4 shadow-[0_12px_24px_rgba(35,70,60,0.12)]">
                 <div className="flex items-center gap-4">
@@ -1779,7 +1779,11 @@ export default function ListeningScreen() {
               </button>
               <button
                 type="button"
-                onClick={goNextVocab}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  goNextVocab();
+                }}
                 className="inline-flex items-center gap-2 rounded-full bg-[#dfe5df] px-4 py-2 text-xs font-semibold text-(--vv-accent-strong) transition"
               >
                 {isLastVocabCard ? "完了" : "次へ"}
