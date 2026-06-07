@@ -90,9 +90,6 @@ export class ListeningController {
       storage: diskStorage({
         destination: './public/audios',
         filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          
           let decodedName = file.originalname;
           try {
             decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
@@ -103,7 +100,7 @@ export class ListeningController {
           // Replace spaces and special characters with underscore to avoid URL issues
           baseName = baseName.replace(/[^a-zA-Z0-9\u0080-\uFFFF_-]/g, '_');
           
-          cb(null, `${baseName}-${uniqueSuffix}${extension}`);
+          cb(null, `${baseName}${extension}`);
         },
       }),
       limits: {

@@ -1,7 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminSidebar from "./admin-sidebar";
+import { api } from "@/lib/api";
+
+type BackendUser = {
+  _id: string;
+  user_name: string;
+  email: string;
+  role: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 type UserRow = {
   id: string;
@@ -24,39 +36,6 @@ type ProgressItem = {
   listenPercent: number;
 };
 
-const users: UserRow[] = [
-  {
-    id: "tanaka",
-    name: "田中太郎",
-    email: "tanaka.taro@example.jp",
-    progress: "60/115",
-    lessons: "1/2/4",
-    lastActive: "2 giờ trước",
-    initials: "田中",
-    joinedAt: "15/03/2026",
-  },
-  {
-    id: "sato",
-    name: "佐藤花子",
-    email: "sato.hanako@example.jp",
-    progress: "40/115",
-    lessons: "1/1/4",
-    lastActive: "1 ngày trước",
-    initials: "佐藤",
-    joinedAt: "12/03/2026",
-  },
-  {
-    id: "yamada",
-    name: "山田次郎",
-    email: "yamada.jiro@example.jp",
-    progress: "18/115",
-    lessons: "0/1/4",
-    lastActive: "5 ngày trước",
-    initials: "山田",
-    joinedAt: "10/03/2026",
-  },
-];
-
 const progressItems: ProgressItem[] = [
   {
     id: "super-register",
@@ -74,12 +53,66 @@ const progressItems: ProgressItem[] = [
   },
 ];
 
+function formatDate(isoDate: string): string {
+  const d = new Date(isoDate);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return parts.slice(0, 2).map((p) => p[0]).join("").toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function mapBackendUser(u: BackendUser): UserRow {
+  return {
+    id: u._id,
+    name: u.user_name,
+    email: u.email,
+    progress: "—",
+    lessons: "—",
+    lastActive: "—",
+    initials: getInitials(u.user_name),
+    joinedAt: formatDate(u.created_at),
+  };
+}
+
 export default function AdminUsersScreen() {
   const [query, setQuery] = useState("");
   const [progressQuery, setProgressQuery] = useState("");
   const [activeModal, setActiveModal] = useState<UserModal>(null);
   const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
   const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastError, setToastError] = useState(false);
+
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const data = await api.get<BackendUser[]>("/users");
+      setUsers(data.map(mapBackendUser));
+    } catch (err) {
+      console.error("Failed to fetch users:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
 
   const filteredUsers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -89,7 +122,7 @@ export default function AdminUsersScreen() {
         value.toLowerCase().includes(normalized),
       ),
     );
-  }, [query]);
+  }, [query, users]);
 
   const filteredProgressItems = useMemo(() => {
     const normalized = progressQuery.trim().toLowerCase();
@@ -102,12 +135,57 @@ export default function AdminUsersScreen() {
   const openModal = (modal: UserModal, user: UserRow) => {
     setSelectedUser(user);
     setActiveModal(modal);
+    if (modal === "password") {
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordError("");
+    }
   };
 
-  const handleDelete = () => {
-    setActiveModal(null);
+  const showToastMessage = (message: string, isError = false) => {
+    setToastMessage(message);
+    setToastError(isError);
     setShowToast(true);
     window.setTimeout(() => setShowToast(false), 2400);
+  };
+
+  const handleDelete = async () => {
+    if (!selectedUser) return;
+    try {
+      setIsDeleting(true);
+      await api.delete(`/users/${selectedUser.id}`);
+      setActiveModal(null);
+      showToastMessage(`Đã xóa người dùng 「${selectedUser.name}」`);
+      await fetchUsers();
+    } catch (err) {
+      console.error("Failed to delete user:", err);
+      showToastMessage("Xóa người dùng thất bại", true);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleSavePassword = async () => {
+    if (!selectedUser) return;
+    if (newPassword.length < 6) {
+      setPasswordError("Mật khẩu tối thiểu 6 ký tự");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("Mật khẩu xác nhận không khớp");
+      return;
+    }
+    try {
+      setIsSavingPassword(true);
+      await api.patch(`/users/${selectedUser.id}/admin-password`, { newPassword });
+      setActiveModal(null);
+      showToastMessage(`Đã đổi mật khẩu cho 「${selectedUser.name}」`);
+    } catch (err) {
+      console.error("Failed to update password:", err);
+      setPasswordError("Đổi mật khẩu thất bại");
+    } finally {
+      setIsSavingPassword(false);
+    }
   };
 
   return (
@@ -115,12 +193,12 @@ export default function AdminUsersScreen() {
       <div className="relative min-h-screen w-full">
         <AdminSidebar active="users" />
 
-        <main className="ml-64 min-h-screen w-[calc(100%-14rem)] bg-[#F2F4F2]">
+        <main className="ml-64 min-h-screen w-[calc(100%-16rem)] bg-[#F2F4F2]">
           <div className="min-h-[120vh] bg-[#F2F4F2]">
-            <div className="border-b border-[#eef2ee] bg-white px-8 pb-6 pt-8">
+            <div className="w-full border-b border-[#eef2ee] bg-white px-8 pb-6 pt-8">
               <div>
                 <h1 className="text-xl font-semibold">Quản lý người dùng</h1>
-                <p className="mt-1 text-xs text-[#9aa8a2]">3 người dùng</p>
+                <p className="mt-1 text-xs text-[#9aa8a2]">{isLoading ? "Đang tải..." : `${users.length} người dùng`}</p>
               </div>
 
               <div className="mt-4 flex items-center gap-2 rounded-full border border-[#e6ece6] bg-[#f7f9f7] px-4 py-2 text-xs text-[#9aa8a2]">
@@ -147,6 +225,20 @@ export default function AdminUsersScreen() {
                     </tr>
                   </thead>
                   <tbody className="text-[#1f2b27]">
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center">
+                          <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[#2f5d50] border-t-transparent" />
+                          <p className="mt-2 text-xs text-[#9aa8a2]">Đang tải danh sách người dùng...</p>
+                        </td>
+                      </tr>
+                    ) : filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center text-xs text-[#9aa8a2]">
+                          Không tìm thấy người dùng nào
+                        </td>
+                      </tr>
+                    ) : null}
                     {filteredUsers.map((user) => (
                       <tr key={user.id} className="border-t border-[#eef2ee]">
                         <td className="px-5 py-3">
@@ -339,6 +431,8 @@ export default function AdminUsersScreen() {
                 Mật khẩu mới
                 <input
                   type="password"
+                  value={newPassword}
+                  onChange={(e) => { setNewPassword(e.target.value); setPasswordError(""); }}
                   placeholder="Tối thiểu 6 ký tự"
                   className="h-11 rounded-2xl border border-[#eef2ee] bg-[#f7f9f7] px-4 text-sm text-[#1f2b27] focus:outline-none"
                 />
@@ -347,10 +441,15 @@ export default function AdminUsersScreen() {
                 Xác nhận mật khẩu
                 <input
                   type="password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(""); }}
                   placeholder="Nhập lại mật khẩu mới"
                   className="h-11 rounded-2xl border border-[#eef2ee] bg-[#f7f9f7] px-4 text-sm text-[#1f2b27] focus:outline-none"
                 />
               </label>
+              {passwordError ? (
+                <p className="text-[11px] text-[#9F403D]">{passwordError}</p>
+              ) : null}
             </div>
 
             <div className="mt-6 flex items-center justify-end gap-4">
@@ -363,10 +462,12 @@ export default function AdminUsersScreen() {
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-[#b6c4bf] px-4 py-2 text-xs font-semibold text-white"
+                onClick={handleSavePassword}
+                disabled={isSavingPassword}
+                className="inline-flex items-center gap-2 rounded-full bg-[#2f5d50] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
                 <SaveIcon className="h-4 w-4" />
-                Lưu
+                {isSavingPassword ? "Đang lưu..." : "Lưu"}
               </button>
             </div>
           </div>
@@ -405,10 +506,11 @@ export default function AdminUsersScreen() {
                 <button
                   type="button"
                   onClick={handleDelete}
-                  className="inline-flex items-center gap-2 rounded-full bg-[#9F403D] px-4 py-2 text-xs font-semibold text-white"
+                  disabled={isDeleting}
+                  className="inline-flex items-center gap-2 rounded-full bg-[#9F403D] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 >
                   <TrashIcon className="h-4 w-4" />
-                  Xóa
+                  {isDeleting ? "Đang xóa..." : "Xóa"}
                 </button>
               </div>
             </div>
@@ -416,13 +518,13 @@ export default function AdminUsersScreen() {
         </div>
       ) : null}
 
-      {showToast && selectedUser ? (
+      {showToast ? (
         <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-[0_16px_32px_rgba(0,0,0,0.12)]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#d8eee2] text-[#2f5d50]">
-            ✓
+          <div className={`flex h-8 w-8 items-center justify-center rounded-full ${toastError ? "bg-[#f8d7d7] text-[#9F403D]" : "bg-[#d8eee2] text-[#2f5d50]"}`}>
+            {toastError ? "✗" : "✓"}
           </div>
           <p className="text-sm text-[#1f2b27]">
-            Đã xóa người dùng 「{selectedUser.name}」
+            {toastMessage}
           </p>
           <button
             type="button"

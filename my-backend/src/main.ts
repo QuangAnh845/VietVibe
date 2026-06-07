@@ -5,6 +5,7 @@ import { ValidationPipe, BadRequestException } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 const mongoose = require('mongoose');
 import { join } from 'path';
+import { existsSync } from 'fs';
 import { MONGO_URI, PORT } from './config/env';
 
 async function bootstrap() {
@@ -47,6 +48,25 @@ async function bootstrap() {
 
   // Bật CORS để Next.js có thể gọi API
   app.enableCors();
+
+  // Middleware to handle fallback for missing audio files with unique suffix
+  app.use('/audios', (req, res, next) => {
+    const decodedUrl = decodeURIComponent(req.url);
+    const filePath = join(process.cwd(), 'public', 'audios', decodedUrl);
+
+    if (!existsSync(filePath)) {
+      // If the file with unique suffix doesn't exist, try stripping the suffix
+      // Regex matches "-<digits>" or "-<digits>-<digits>" before the extension
+      const cleanedUrl = req.url.replace(/-\d+(?:-\d+)?(?=\.[^.]+$)/, '');
+      const cleanedFilePath = join(process.cwd(), 'public', 'audios', decodeURIComponent(cleanedUrl));
+      
+      if (existsSync(cleanedFilePath)) {
+        console.log(`[Audio Fallback] File not found: ${decodedUrl}. Falling back to: ${decodeURIComponent(cleanedUrl)}`);
+        req.url = cleanedUrl;
+      }
+    }
+    next();
+  });
 
   // Serve audio files from /public/audios as /audios/*
   app.useStaticAssets(join(process.cwd(), 'public', 'audios'), {

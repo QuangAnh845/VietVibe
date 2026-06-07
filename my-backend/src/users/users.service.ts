@@ -313,6 +313,68 @@ export class UsersService {
     };
   }
 
+  async findAll(search?: string, month?: string) {
+    const filter: Record<string, any> = { role: { $ne: 'admin' } };
+
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      filter.$or = [{ user_name: regex }, { email: regex }];
+    }
+
+    if (month === 'current') {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      filter.created_at = { $gte: startOfMonth };
+    }
+
+    const users = await this.userModel
+      .find(filter)
+      .select('-password_hash')
+      .sort({ created_at: -1 })
+      .exec();
+
+    return users;
+  }
+
+  async countAll() {
+    return this.userModel.countDocuments({ role: { $ne: 'admin' } }).exec();
+  }
+
+  async deleteUser(userId: string) {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (user.role === 'admin') {
+      throw new BadRequestException('Cannot delete admin user');
+    }
+
+    await this.userModel.findByIdAndDelete(userId).exec();
+
+    // Also clean up user progress
+    try {
+      const UserProgress = require(path.resolve(__dirname, '../../src/models')).UserProgress;
+      await UserProgress.deleteMany({ user_id: this.toObjectId(userId) });
+    } catch {
+      // Silently ignore if UserProgress model is not available
+    }
+
+    return { message: 'User deleted successfully' };
+  }
+
+  async adminUpdatePassword(userId: string, newPassword: string) {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    user.password_hash = newPasswordHash;
+    await user.save();
+
+    return { message: 'Password updated successfully' };
+  }
+
   private async ensureUserExists(userId: string) {
     const user = await this.userModel.findById(userId).select('_id').exec();
     if (!user) {
