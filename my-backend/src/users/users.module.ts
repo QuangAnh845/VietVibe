@@ -4,6 +4,7 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { User, UserSchema } from '../login/schemas/user.schema.js';
 import { LoginModule } from '../login/login.module.js';
+import { RolesGuard } from '../login/guards/roles.guard.js';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { LoginModule } from '../login/login.module.js';
     LoginModule,
   ],
   controllers: [UsersController],
-  providers: [UsersService],
+  providers: [UsersService, RolesGuard],
 })
 export class UsersModule {}
+

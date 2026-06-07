@@ -4,6 +4,7 @@ import {
   Patch,
   Post,
   Put,
+  Delete,
   Body,
   UseGuards,
   Request,
@@ -11,6 +12,7 @@ import {
   UploadedFile,
   BadRequestException,
   Param,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,14 +23,18 @@ import {
   ApiBody,
   ApiOkResponse,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { UsersService } from './users.service.js';
 import { JwtAuthGuard } from '../login/guards/jwt-auth.guard.js';
+import { RolesGuard } from '../login/guards/roles.guard.js';
+import { Roles } from '../login/decorators/roles.decorator.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { UpdatePasswordDto } from './dto/update-password.dto.js';
+import { AdminUpdatePasswordDto } from './dto/admin-update-password.dto.js';
 import { UpdateLearningUnitProgressDto } from './dto/update-learning-unit-progress.dto.js';
 
 @ApiTags('users')
@@ -37,6 +43,53 @@ import { UpdateLearningUnitProgressDto } from './dto/update-learning-unit-progre
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  // ─── Admin Endpoints ───────────────────────────────────────
+
+  @Get()
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: '[Admin] List all users' })
+  @ApiQuery({ name: 'search', required: false, description: 'Search by name or email' })
+  @ApiQuery({ name: 'month', required: false, description: 'Filter by month: "current" for current month' })
+  findAll(
+    @Query('search') search?: string,
+    @Query('month') month?: string,
+  ) {
+    return this.usersService.findAll(search, month);
+  }
+
+  @Get('count')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: '[Admin] Get total user count' })
+  async countAll() {
+    const count = await this.usersService.countAll();
+    return { count };
+  }
+
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: '[Admin] Delete a user' })
+  @ApiParam({ name: 'id', description: 'User ID to delete' })
+  deleteUser(@Param('id') id: string) {
+    return this.usersService.deleteUser(id);
+  }
+
+  @Patch(':id/admin-password')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: '[Admin] Change user password' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  adminUpdatePassword(
+    @Param('id') id: string,
+    @Body() dto: AdminUpdatePasswordDto,
+  ) {
+    return this.usersService.adminUpdatePassword(id, dto.newPassword);
+  }
+
+  // ─── User Self-Service Endpoints ───────────────────────────
 
   @Get('me')
   @ApiOperation({ summary: 'Get current user profile' })

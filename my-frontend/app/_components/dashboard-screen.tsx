@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import AdminSidebar from "./admin-sidebar";
 import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
+
+type BackendUser = {
+  _id: string;
+  user_name: string;
+  email: string;
+  created_at: string;
+};
 
 type ModalType = "activities" | "vocab" | "listening" | "users" | null;
 
@@ -69,33 +77,7 @@ const listeningTop = [
   { index: "5", title: "レストラン / 会計する", meta: "19" },
 ];
 
-const users = [
-  {
-    name: "佐藤花子",
-    email: "sato.hanako@example.jp",
-    date: "20/04/2026",
-  },
-  {
-    name: "田中太郎",
-    email: "tanaka.taro@example.jp",
-    date: "15/04/2026",
-  },
-  {
-    name: "山田次郎",
-    email: "yamada.jiro@example.jp",
-    date: "10/04/2026",
-  },
-  {
-    name: "Takahashi Misaki",
-    email: "takahashi.misaki@example.jp",
-    date: "08/04/2026",
-  },
-  {
-    name: "Ito Kenta",
-    email: "ito.kenta@example.jp",
-    date: "05/04/2026",
-  },
-];
+
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -108,6 +90,45 @@ export default function DashboardScreen() {
   const [notificationMode, setNotificationMode] = useState<
     "login" | "register"
   >("login");
+
+  const [newUsers, setNewUsers] = useState<{ name: string; email: string; date: string }[]>([]);
+  const [allUsers, setAllUsers] = useState<{ name: string; email: string; date: string }[]>([]);
+  const [userCount, setUserCount] = useState<number | null>(null);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+
+  function formatDate(isoDate: string): string {
+    const d = new Date(isoDate);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
+
+  const fetchDashboardUsers = useCallback(async () => {
+    try {
+      setIsLoadingUsers(true);
+      const [monthlyUsers, countRes] = await Promise.all([
+        api.get<BackendUser[]>("/users?month=current"),
+        api.get<{ count: number }>("/users/count"),
+      ]);
+      const mapped = monthlyUsers.map((u) => ({
+        name: u.user_name,
+        email: u.email,
+        date: formatDate(u.created_at),
+      }));
+      setNewUsers(mapped.slice(0, 3));
+      setAllUsers(mapped);
+      setUserCount(countRes.count);
+    } catch (err) {
+      console.error("Failed to fetch dashboard users:", err);
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardUsers();
+  }, [fetchDashboardUsers]);
 
   const normalizeText = (value: string) => value.trim().toLowerCase();
   const filterRows = (
@@ -204,7 +225,7 @@ export default function DashboardScreen() {
       <div className="relative min-h-screen w-full">
         <AdminSidebar active="dashboard" />
 
-        <main className="ml-56 min-h-screen w-[calc(100%-14rem)] bg-[#f4f6f2]">
+        <main className="ml-64 min-h-screen w-[calc(100%-16rem)] bg-[#f4f6f2]">
           <div className="min-h-[140vh] bg-white/90 pl-8 pb-16">
             <header className="border-b border-[#eef2ee] bg-white/95 px-6 py-4">
               <h1 className=" text-2xl font-semibold">Dashboard</h1>
@@ -216,7 +237,7 @@ export default function DashboardScreen() {
               <div className="grid grid-cols-4 gap-4">
                 <StatCard
                   label="Người dùng"
-                  value="300"
+                  value={userCount !== null ? String(userCount) : "—"}
                   subtext=""
                   icon={<UsersIcon className="h-4 w-4" />}
                 />
@@ -338,14 +359,22 @@ export default function DashboardScreen() {
                   </button>
                 </div>
                 <div className="mt-3 space-y-3 px-2 text-sm">
-                  {users.slice(0, 3).map((user) => (
-                    <UserRow
-                      key={user.email}
-                      name={user.name}
-                      email={user.email}
-                      date={user.date}
-                    />
-                  ))}
+                  {isLoadingUsers ? (
+                    <div className="flex items-center justify-center py-6">
+                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#2f5d50] border-t-transparent" />
+                    </div>
+                  ) : newUsers.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-[#9aa8a2]">Chưa có người dùng mới trong tháng này</p>
+                  ) : (
+                    newUsers.map((user) => (
+                      <UserRow
+                        key={user.email}
+                        name={user.name}
+                        email={user.email}
+                        date={user.date}
+                      />
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -424,27 +453,28 @@ export default function DashboardScreen() {
           {activeModal === "users" ? (
             <ModalSection title="Tất cả người dùng mới trong tháng này">
               <div className="space-y-3">
-                {users.map((user) => (
-                  <ModalUserRow
-                    key={`modal-${user.email}`}
-                    name={user.name}
-                    email={user.email}
-                    date={user.date}
-                  />
-                ))}
+                {isLoadingUsers ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#2f5d50] border-t-transparent" />
+                  </div>
+                ) : allUsers.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-[#9aa8a2]">Chưa có người dùng mới</p>
+                ) : (
+                  
+                  allUsers.map((user) => (
+                    <div className="border-b border-[#f1f3f1] overflow-hidden">
+                    <ModalUserRow
+                      key={`modal-${user.email}`}
+                      name={user.name}
+                      email={user.email}
+                      date={user.date}
+                    />
+                  </div>))
+                )}
               </div>
             </ModalSection>
           ) : null}
 
-          <div className="mt-4 flex justify-end">
-            <button
-              type="button"
-              onClick={() => setActiveModal(null)}
-              className="rounded-full px-4 py-2 text-xs font-semibold text-[#2f5d50]"
-            >
-              Đóng
-            </button>
-          </div>
         </Modal>
       ) : null}
     </div>
@@ -572,8 +602,8 @@ function Modal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 px-6">
-      <div className="w-full max-w-180 rounded-2xl bg-white p-6 shadow-[0_20px_40px_rgba(0,0,0,0.18)]">
-        <div className="flex justify-end">
+      <div className="flex w-full max-w-[45rem] flex-col max-h-[85vh] rounded-2xl bg-white p-6 shadow-[0_20px_40px_rgba(0,0,0,0.18)]">
+        <div className="flex justify-end flex-shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -583,8 +613,17 @@ function Modal({
             ×
           </button>
         </div>
-        <div className="-mt-4 max-h-[70vh] overflow-y-auto pr-2">
+        <div className="-mt-4 flex-1 overflow-y-auto pr-2">
           {children}
+        </div>
+        <div className="mt-4 flex flex-shrink-0 justify-end pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full  px-4 py-2 text-xs font-semibold  transition hover:bg-[#e4e9e4]"
+          >
+            Đóng
+          </button>
         </div>
       </div>
     </div>

@@ -19,18 +19,18 @@ export default function AdminSidebar({ active }: AdminSidebarProps) {
     }`;
 
   return (
-    <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col bg-white/95 p-5 ring-1 ring-[rgba(47,93,80,0.12)]">
-      <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2f5d50] text-sm font-semibold text-white">
+    <aside className="fixed left-0 top-0 flex h-screen w-64 flex-col bg-white/95 ring-1 ring-[rgba(47,93,80,0.12)]">
+      <div className="flex items-center gap-3 border-b border-black/10 px-6 py-8 ">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#2f5d50] text-lg font-semibold text-white">
           VV
         </div>
         <div>
-          <p className="text-sm font-semibold">VietVibe</p>
+          <p className="text-lg font-semibold">VietVibe</p>
           <p className="text-[11px] text-[#7b8b83]">Bảng quản trị</p>
         </div>
       </div>
 
-      <div className="mt-8">
+      <div className="mt-8 p-5">
         <p className="text-[11px] font-semibold uppercase text-[#9aa8a2]">
           Danh mục
         </p>
@@ -62,7 +62,7 @@ export default function AdminSidebar({ active }: AdminSidebarProps) {
         </div>
       </div>
 
-      <div className="mt-8">
+      <div className="p-5">
         <p className="text-[11px] font-semibold uppercase text-[#9aa8a2]">
           Người dùng
         </p>
@@ -78,7 +78,7 @@ export default function AdminSidebar({ active }: AdminSidebarProps) {
         </div>
       </div>
 
-      <div className="mt-auto rounded-2xl  p-2">
+      <div className="mt-auto rounded-2xl  p-5">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2f5d50] text-xs font-semibold text-white">
             AD
